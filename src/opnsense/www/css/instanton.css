@@ -1,0 +1,55 @@
+/* Instant On monitor - plugin styles */
+.instanton-page { padding-bottom: 20px; }
+.instanton-toolbar { text-align: right; margin: 0 0 10px; }
+.instanton-toolbar .instanton-age { margin-right: 10px; font-size: 12px; }
+.instanton-toolbar .instanton-auto { font-weight: normal; margin-right: 8px; font-size: 12px; }
+.instanton-help .panel-heading { cursor: pointer; user-select: none; }
+.instanton-help .panel-body { font-size: 13px; }
+.instanton-help .panel-body ul, .instanton-help .panel-body ol { padding-left: 20px; margin-bottom: 6px; }
+.instanton-section { margin-bottom: 15px; padding: 0; }
+.instanton-section-head { display: flex; align-items: center; gap: 8px; padding: 10px 15px 0; }
+.instanton-section-head h3 { margin: 0; font-size: 16px; }
+.instanton-section-body { padding: 10px 15px; overflow-x: auto; }
+.instanton-cards { margin-bottom: 5px; }
+.instanton-card { display: flex; align-items: center; gap: 12px; padding: 12px 15px; margin-bottom: 15px;
+    border-radius: 3px; background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.15); border-left: 4px solid #5cb85c;
+    color: inherit; text-decoration: none; }
+.instanton-card:hover, .instanton-card:focus { text-decoration: none; color: inherit; box-shadow: 0 2px 6px rgba(0,0,0,.2); }
+.instanton-card.bad { border-left-color: #d9534f; }
+.instanton-card-icon { font-size: 26px; opacity: .55; width: 34px; text-align: center; }
+.instanton-card-title { font-size: 12px; text-transform: uppercase; letter-spacing: .03em; opacity: .7; }
+.instanton-card-value { font-size: 22px; font-weight: 600; line-height: 1.2; }
+.instanton-card-sub { font-size: 12px; opacity: .75; }
+.instanton-insights li { margin-bottom: 8px; }
+.instanton-insight-detail { color: #555; margin-left: 22px; font-size: 12px; }
+.instanton-table-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
+.instanton-table-tools input { max-width: 260px; }
+.instanton-table th.sortable { cursor: pointer; white-space: nowrap; }
+.instanton-table th .fa-info-circle { font-size: 11px; }
+.instanton-table td { vertical-align: middle !important; }
+.instanton-dim td { opacity: .55; }
+.instanton-flash td { animation: instanton-flash 2.5s ease-out 1; }
+@keyframes instanton-flash { from { background: #fcf8e3; } to { background: transparent; } }
+.instanton-filters { margin-bottom: 8px; }
+.instanton-filters select { margin-right: 4px; margin-bottom: 4px; }
+.instanton-kv th { width: 35%; font-weight: 600; }
+.instanton-progress { height: 6px; margin: 4px 0 0; max-width: 220px; }
+.instanton-test { margin-bottom: 6px; padding: 8px 12px; }
+/* front panel */
+.instanton-panel { display: flex; flex-wrap: wrap; gap: 14px; padding: 10px; background: #2d3436; border-radius: 4px;
+    width: max-content; max-width: 100%; overflow-x: auto; }
+.instanton-panel .panel-row { display: flex; gap: 4px; margin: 2px 0; }
+.instanton-panel .panel-block { display: flex; flex-direction: column; }
+.instanton-panel .panel-extra { justify-content: center; }
+.port { display: inline-flex; flex-direction: column; align-items: center; justify-content: center; width: 30px; height: 30px;
+    border-radius: 3px; font-size: 10px; line-height: 1; color: #fff; text-decoration: none; position: relative; vertical-align: middle; }
+a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px solid #fff; }
+.port .port-marks { font-size: 9px; margin-top: 2px; white-space: nowrap; }
+.port .port-marks .fa-fw { width: auto; }
+.port-up { background: #27ae60; }
+.port-slow { background: #e67e22; }
+.port-down { background: #636e72; }
+.port-disabled { background: repeating-linear-gradient(45deg, #444, #444 4px, #555 4px, #555 8px); }
+.port-alert { box-shadow: inset 0 0 0 2px #f1c40f; }
+.instanton-legend { margin-top: 6px; }
+.instanton-legend .port { width: 12px; height: 12px; margin: 0 2px 0 8px; }

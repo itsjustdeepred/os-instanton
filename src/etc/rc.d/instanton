@@ -1,0 +1,73 @@
+#!/bin/sh
+
+# PROVIDE: instanton
+# REQUIRE: NETWORKING syslogd
+# KEYWORD: shutdown
+
+. /etc/rc.subr
+
+name="instanton"
+rcvar="instanton_enable"
+
+load_rc_config ${name}
+
+: ${instanton_enable:="NO"}
+
+pidfile="/var/run/${name}.pid"
+conffile="/usr/local/etc/instanton/instanton.conf"
+collector="/usr/local/opnsense/scripts/instanton/collect.py"
+
+start_cmd="${name}_start"
+stop_cmd="${name}_stop"
+status_cmd="${name}_status"
+extra_commands="status"
+
+instanton_pid()
+{
+	if [ -f "${pidfile}" ]; then
+		pid=$(cat "${pidfile}")
+		if [ -n "${pid}" ] && kill -0 "${pid}" 2>/dev/null; then
+			echo "${pid}"
+			return 0
+		fi
+	fi
+	return 1
+}
+
+instanton_start()
+{
+	if instanton_pid > /dev/null; then
+		echo "${name} is already running."
+		return 0
+	fi
+	mkdir -p /var/db/instanton /usr/local/etc/instanton
+	chmod 750 /var/db/instanton /usr/local/etc/instanton
+	[ -f "${conffile}" ] && chmod 600 "${conffile}"
+	/usr/sbin/daemon -f -S -T ${name} -p "${pidfile}" "${collector}" --loop
+	echo "Starting ${name}."
+}
+
+instanton_stop()
+{
+	pid=$(instanton_pid) || { echo "${name} is not running."; return 0; }
+	kill -TERM "${pid}"
+	for i in 1 2 3 4 5 6 7 8 9 10; do
+		kill -0 "${pid}" 2>/dev/null || break
+		sleep 1
+	done
+	kill -0 "${pid}" 2>/dev/null && kill -KILL "${pid}"
+	rm -f "${pidfile}"
+	echo "Stopped ${name}."
+}
+
+instanton_status()
+{
+	if pid=$(instanton_pid); then
+		echo "${name} is running as pid ${pid}."
+	else
+		echo "${name} is not running."
+		return 1
+	fi
+}
+
+run_rc_command "$1"

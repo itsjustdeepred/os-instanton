@@ -1,0 +1,25 @@
+<metadata>
+    <instanton>
+        <filename>InstantOn.js</filename>
+        <endpoints>
+            <endpoint>/api/instanton/status/summary</endpoint>
+        </endpoints>
+        <translations>
+            <title>Instant On</title>
+            <status>Status</status>
+            <nodata>No data yet - configure the plugin</nodata>
+            <switch>Switch</switch>
+            <ports>ports up</ports>
+            <offline>offline</offline>
+            <aps>Access points</aps>
+            <online>online</online>
+            <clients>Clients</clients>
+            <wireless>wireless</wireless>
+            <wired>wired</wired>
+            <poe>PoE</poe>
+            <checks>Checks</checks>
+            <more>more</more>
+            <allgood>No problems found</allgood>
+        </translations>
+    </instanton>
+</metadata>

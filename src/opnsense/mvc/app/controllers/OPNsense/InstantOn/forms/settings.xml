@@ -1,0 +1,140 @@
+<form>
+    <field>
+        <type>header</type>
+        <label>General</label>
+    </field>
+    <field>
+        <id>instanton.general.enabled</id>
+        <label>Enable monitor</label>
+        <type>checkbox</type>
+        <help>Start the background monitor. It polls the enabled sources at the interval below and keeps a history of devices and events. Nothing is ever changed on the switch or the access points: the plugin only reads.</help>
+    </field>
+    <field>
+        <id>instanton.general.interval</id>
+        <label>Polling interval (seconds)</label>
+        <type>text</type>
+        <help>How often the devices are read. 60 seconds is a good default. Shorter intervals give smoother throughput figures but put more load on the switch web server; one poll of a 52-port switch takes about 5 seconds.</help>
+    </field>
+    <field>
+        <id>instanton.general.history_days</id>
+        <label>Keep history (days)</label>
+        <type>text</type>
+        <help>Devices that were not seen for longer than this are forgotten, and older events are deleted.</help>
+    </field>
+    <field>
+        <id>instanton.general.flap_threshold</id>
+        <label>Link flap warning</label>
+        <type>text</type>
+        <advanced>true</advanced>
+        <help>Warn about a port when the switch log holds at least this many link-down messages for it. Moments when many ports drop together (switch restart, firmware update) are ignored.</help>
+    </field>
+    <field>
+        <id>instanton.general.poe_warn_percent</id>
+        <label>PoE budget warning (%)</label>
+        <type>text</type>
+        <advanced>true</advanced>
+        <help>Warn when the power drawn by PoE devices exceeds this share of the switch power budget.</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Switch (local management)</label>
+    </field>
+    <field>
+        <id>instanton.switch.enabled</id>
+        <label>Read the switch</label>
+        <type>checkbox</type>
+        <help>Read an Instant On 1930/1960 switch through its local web interface. The switch must be in local management mode (its own web login page is reachable). Cloud-managed switches have no local login: use the cloud source instead.</help>
+    </field>
+    <field>
+        <id>instanton.switch.host</id>
+        <label>Address</label>
+        <type>text</type>
+        <help>IP address or host name of the switch, for example 10.0.1.2. HTTPS is used.</help>
+    </field>
+    <field>
+        <id>instanton.switch.username</id>
+        <label>User name</label>
+        <type>text</type>
+        <help>An account of the switch web interface. Read access is enough. A dedicated account makes the plugin sessions easy to recognise in the switch log.</help>
+    </field>
+    <field>
+        <id>instanton.switch.password</id>
+        <label>Password</label>
+        <type>password</type>
+        <help>Stored in the firewall configuration and in a file readable only by root. It is sent to the switch RSA-encrypted, the same way its web interface does.</help>
+    </field>
+    <field>
+        <id>instanton.switch.verify_tls</id>
+        <label>Verify certificate</label>
+        <type>checkbox</type>
+        <advanced>true</advanced>
+        <help>Check the HTTPS certificate of the switch. Leave it off for the factory self-signed certificate.</help>
+    </field>
+    <field>
+        <id>instanton.switch.uplink_ports</id>
+        <label>Uplink ports</label>
+        <type>text</type>
+        <advanced>true</advanced>
+        <help>Ports that lead towards the firewall or the rest of the network, for example 1/51. Addresses learned on them are not listed as clients. Leave empty for automatic detection: the port where the firewall's own MAC address is seen, or whose description mentions OPNsense, firewall, router, gateway or uplink.</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Access points</label>
+    </field>
+    <field>
+        <id>instanton.aps.enabled</id>
+        <label>Read the access points</label>
+        <type>checkbox</type>
+        <help>Read the diagnostic page each Instant On access point publishes on the local network (model, serial, firmware, coordinator, cloud and time-sync status, reason of the last restart). This page needs no password. The list of wireless clients is not available locally: it needs the cloud source.</help>
+    </field>
+    <field>
+        <id>instanton.aps.discover</id>
+        <label>Discover through the switch</label>
+        <type>checkbox</type>
+        <help>Find access points through the LLDP neighbours of the switch. Each one is shown with its switch port, link speed and PoE draw. Access points meshed over Wi-Fi are not plugged into the switch: add them below.</help>
+    </field>
+    <field>
+        <id>instanton.aps.hosts</id>
+        <label>Additional access points</label>
+        <type>text</type>
+        <help>IP addresses of access points that are not discovered automatically (meshed, or connected to another switch), separated by commas.</help>
+    </field>
+    <field>
+        <id>instanton.aps.port</id>
+        <label>Diagnostic port</label>
+        <type>text</type>
+        <advanced>true</advanced>
+        <help>TCP port of the access point diagnostic page. Instant On uses 8080.</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Cloud portal (optional)</label>
+    </field>
+    <field>
+        <id>instanton.cloud.enabled</id>
+        <label>Read the cloud portal</label>
+        <type>checkbox</type>
+        <help>Add the data only the Instant On cloud knows: network names (SSID), signal strength, band and health of every wireless client, radio channels and alerts. Uses the same undocumented API as the web portal, so it can stop working when HPE changes it. Accounts with two-factor authentication are not supported. The firewall needs Internet access to portal.arubainstanton.com and sso.arubainstanton.com.</help>
+    </field>
+    <field>
+        <id>instanton.cloud.username</id>
+        <label>Account e-mail</label>
+        <type>text</type>
+        <help>E-mail address used to sign in to the Instant On app or portal. A separate account invited to the site with read access is recommended.</help>
+    </field>
+    <field>
+        <id>instanton.cloud.password</id>
+        <label>Account password</label>
+        <type>password</type>
+        <help>Stored in the firewall configuration and in a file readable only by root.</help>
+    </field>
+    <field>
+        <id>instanton.cloud.site</id>
+        <label>Site</label>
+        <type>text</type>
+        <help>Name or ID of the Instant On site to read. Leave empty to use the first site of the account. "Test connection" lists the available sites.</help>
+    </field>
+</form>

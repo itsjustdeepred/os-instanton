@@ -1,0 +1,9 @@
+<acl>
+    <page-services-instanton>
+        <name>Services: Instant On</name>
+        <patterns>
+            <pattern>ui/instanton/*</pattern>
+            <pattern>api/instanton/*</pattern>
+        </patterns>
+    </page-services-instanton>
+</acl>

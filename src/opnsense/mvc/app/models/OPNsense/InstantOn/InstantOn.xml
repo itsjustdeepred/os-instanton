@@ -1,0 +1,100 @@
+<model>
+    <mount>//OPNsense/instanton</mount>
+    <version>1.0.0</version>
+    <description>HPE Networking Instant On monitor</description>
+    <items>
+        <general>
+            <enabled type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </enabled>
+            <interval type="IntegerField">
+                <Default>60</Default>
+                <MinimumValue>15</MinimumValue>
+                <MaximumValue>3600</MaximumValue>
+                <ValidationMessage>The polling interval must be between 15 and 3600 seconds.</ValidationMessage>
+                <Required>Y</Required>
+            </interval>
+            <history_days type="IntegerField">
+                <Default>14</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>365</MaximumValue>
+                <ValidationMessage>History must be kept between 1 and 365 days.</ValidationMessage>
+                <Required>Y</Required>
+            </history_days>
+            <flap_threshold type="IntegerField">
+                <Default>5</Default>
+                <MinimumValue>2</MinimumValue>
+                <MaximumValue>1000</MaximumValue>
+                <ValidationMessage>Use a value between 2 and 1000.</ValidationMessage>
+                <Required>Y</Required>
+            </flap_threshold>
+            <poe_warn_percent type="IntegerField">
+                <Default>80</Default>
+                <MinimumValue>10</MinimumValue>
+                <MaximumValue>100</MaximumValue>
+                <ValidationMessage>Use a percentage between 10 and 100.</ValidationMessage>
+                <Required>Y</Required>
+            </poe_warn_percent>
+        </general>
+        <switch>
+            <enabled type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </enabled>
+            <host type="HostnameField">
+                <IpAllowed>Y</IpAllowed>
+                <ValidationMessage>Enter the IP address or host name of the switch.</ValidationMessage>
+            </host>
+            <username type="TextField">
+                <Mask>/^[^\s]{1,64}$/</Mask>
+                <ValidationMessage>The user name cannot contain spaces.</ValidationMessage>
+            </username>
+            <password type="TextField">
+                <Mask>/^[^\n\r]{0,128}$/</Mask>
+            </password>
+            <verify_tls type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </verify_tls>
+            <uplink_ports type="TextField">
+                <Mask>/^([0-9]+\/[0-9]+)?([ ,]+[0-9]+\/[0-9]+)*$/</Mask>
+                <ValidationMessage>Use switch port names such as 1/51, separated by commas.</ValidationMessage>
+            </uplink_ports>
+        </switch>
+        <aps>
+            <enabled type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </enabled>
+            <discover type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </discover>
+            <hosts type="TextField">
+                <Mask>/^([a-zA-Z0-9.\-]+)?([ ,]+[a-zA-Z0-9.\-]+)*$/</Mask>
+                <ValidationMessage>Enter IP addresses or host names separated by commas.</ValidationMessage>
+            </hosts>
+            <port type="PortField">
+                <Default>8080</Default>
+                <Required>Y</Required>
+            </port>
+        </aps>
+        <cloud>
+            <enabled type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </enabled>
+            <username type="TextField">
+                <Mask>/^[^\s]{0,128}$/</Mask>
+                <ValidationMessage>Enter the e-mail address of the Instant On account.</ValidationMessage>
+            </username>
+            <password type="TextField">
+                <Mask>/^[^\n\r]{0,128}$/</Mask>
+            </password>
+            <site type="TextField">
+                <Mask>/^[^\n\r]{0,128}$/</Mask>
+            </site>
+        </cloud>
+    </items>
+</model>

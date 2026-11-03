@@ -1,0 +1,31 @@
+<?xml version='1.0'?><re><data name="IP Address" pn="true">192.0.2.15</data><data name="Netmask" pn="true">255.255.255.0</data><data name="Gateway" pn="true">192.0.2.1</data><data name="DNS" pn="true">192.0.2.1</data><data name="Master Device" pn="true">False</data><data name="Device count" pn="true">1</data><data name="Uplink Editable" pn="true">False</data><data name="Uplink Type          " pn="true">dhcp</data><data name="Management VLAN      " pn="true">1</data><data name="Management VLAN mode " pn="true">untagged</data><data name="Management VLAN editable" pn="true">False</data><data name="Current Time" pn="true">2026-11-03 23:20:05</data><data name="Time source" pn="true">Onboarding</data><data name="NTP Status" pn="true">ERROR</data><data name="NTP Server" pn="true">192.0.2.1</data><data name="NTP Log" pn="true">&#32;1 Jan 08:01:03 ntpdate[1864]: no server suitable for synchronization found</data><data name="Onboarding Status" pn="true">SUCCESS</data><data name="Onboarding Could Not Complete" pn="true">False</data><data name="Onboarding Period Is Over" pn="true">False</data><data name="Onboarding Reason" pn="true"></data><data name="Cloudconnect Status" pn="true">CONNECTED</data><data name="Cloudconnect Code" pn="true">0</data><data name="Cloudconnect Reason" pn="true"></data><data name="Firmware Version" pn="true">3.4.2.0</data><data name="Firmware Build Number" pn="true">97182</data><data name="AP Model" pn="true">AP25</data><data name="Serial Number" pn="true">SN00000000</data><data name="Reboot Cause" pn="true">AP Reboot reason:  Panic: assert Warm-reset</data><data name="Lua Current State" pn="true">operational</data><data name="Lua Previous State" pn="true">start_cloudconnect</data><data name="Lua Transition Event" pn="true">ready</data><data name="CLI Swarm State" pn="true">Config Sync Complete</data><data name="Mesh Cluster Name" pn="true">Present</data><data name="Mesh Cluster Key" pn="true">Present</data><data name="Election Stats" pn="true"><![CDATA[State        : Member
+
+conductor_beacon   : sent=0 rcvd=478185
+hierarchy_beacon: sent=0 rcvd=0
+hierarchy_ack   : sent=0 rcvd=0
+beacon_req      : sent=0 rcvd=0
+beacon_resp     : sent=0 rcvd=0
+
+election wait   : 135(0 0) HZ=500
+timer slow      : 0
+conductor high cpu : 0
+ap cpu usage    : 2
+cpu core usage  : 0 0 30 3
+delay by cpu usage: 16776
+Member-&gt;Pot-Conductor : 0 time
+Pot-conductor-&gt;Conductor: 0 time
+Pot-conductor-&gt;Member : 0 time
+
+last spoof arp rcvd: 0
+last spoof mac: 00:00:00:00:00:00
+last beacon received ticks: 0
+uplink flap count         : 0
+max beacon miss ticks     : 1
+
+hierarchy mode            : 0
+last hierarchy beacon received ticks: 0
+last hierarchy mac: 00:00:00:00:00:00
+provisioned conductor denied : 0
+last conductor : 00:00:00:00:00:00 192.0.2.14
+
+]]></data><data name="Script watchdog_kicker (state: 2)" pn="true">Running</data><data name="Script fsm (state: 2)" pn="true">Running</data><data name="Script led (state: 2)" pn="true">Running</data><data name="Script time_sync (state: 2)" pn="true">Running</data><data name="Script config_handler (state: 2)" pn="true">Running</data><data name="Script system_ops (state: 2)" pn="true">Running</data><data name="Script tech_support (state: 2)" pn="true">Running</data><data name="Script cpu_usage (state: 2)" pn="true">Running</data><data name="Script memory_usage (state: 2)" pn="true">Running</data><data name="Script flash_usage (state: 2)" pn="true">Running</data><data name="Script core_dumps_handler (state: 2)" pn="true">Running</data><data name="Script devconf_cmd_sender (state: 2)" pn="true">Running</data><data name="Script libBucketsV1 (state: 1)" pn="true">Loaded</data><data name="Script libDeviceMonitoringV2 (state: 1)" pn="true">Loaded</data><data name="Script appTrafficBucketsV5 (state: 2)" pn="true">Running</data><data name="Script wiredTrafficBucketsV7 (state: 2)" pn="true">Running</data><data name="Script deviceStatusV7 (state: 2)" pn="true">Running</data><data name="Script problemMonitoringV2 (state: 2)" pn="true">Running</data><data name="Script analyticsV1 (state: 2)" pn="true">Running</data><data name="Script networkDiagnosticsV2 (state: 2)" pn="true">Running</data></re>

@@ -1,0 +1,26 @@
+Monitor HPE Networking (Aruba) Instant On switches and access points
+from the OPNsense web interface.
+
+The plugin reads, and never changes:
+
+* Instant On 1930/1960 switches in local management mode: ports, link
+  speed, throughput, errors, PoE per port and budget, VLANs, LLDP
+  neighbours, MAC address table, temperature, fans, power supply and
+  the switch log.
+* Instant On access points through their local diagnostic page:
+  model, firmware, swarm coordinator, cloud and time-sync status and
+  the reason of the last restart.
+* Optionally the Instant On cloud portal: SSIDs, signal and band of
+  wireless clients, radios and alerts.
+
+Clients are correlated with the firewall ARP table, DHCP leases and
+static mappings. Health checks point out problems such as a wrong
+switch clock, failing time sync, unstable ports, crashed access points
+or PoE faults, and changes are recorded as events and sent to syslog.
+
+Plugin Changelog
+================
+
+1.0
+
+* Initial release

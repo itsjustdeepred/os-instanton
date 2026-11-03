@@ -1,0 +1,13 @@
+<menu>
+    <Services>
+        <InstantOn VisibleName="Instant On" cssClass="fa fa-wifi fa-fw">
+            <Overview order="10" url="/ui/instanton/"/>
+            <Switch order="20" url="/ui/instanton/index/switch"/>
+            <AccessPoints VisibleName="Access Points" order="30" url="/ui/instanton/index/accesspoints"/>
+            <Clients order="40" url="/ui/instanton/index/clients"/>
+            <Events order="50" url="/ui/instanton/index/events"/>
+            <Settings order="60" url="/ui/instanton/index/settings"/>
+            <LogFile VisibleName="Log File" order="70" url="/ui/diagnostics/log/core/instanton"/>
+        </InstantOn>
+    </Services>
+</menu>
