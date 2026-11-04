@@ -159,7 +159,7 @@
             '<li>Devices without an IP are usually on a VLAN the firewall does not route, use a static address, or ' +
             'have been quiet for a while.</li></ul>',
         configuration: '<p>The configuration of the switch, read from its local web interface and grouped like its menus. ' +
-            'The open tab is read from the switch when it is opened and again every minute.</p>' +
+            'Each tab is read from the switch the first time it is opened, and a section is read again after it is changed.</p>' +
             '<ul><li>The <b>System</b> tab starts with the common tasks: name, time and time server, remote syslog, saving the ' +
             'configuration, the locator LED and restarting the switch.</li>' +
             '<li>Other sections show the values as the switch stores them. Most switches use <i>1</i> for on and <i>2</i> ' +
@@ -1679,7 +1679,6 @@
                 .done(function (d) {
                     if (d.status !== 'ok') { notice(page.$banner, 'danger', esc(d.message || 'Cannot read the switch.')); return; }
                     data = d;
-                    lastRead = Date.now() / 1000;
                 }).always(function () {
                     reading = false;
                     draw();
@@ -1690,23 +1689,19 @@
                 });
         }
 
-        // the open tab is read from the switch when it opens and then every minute, without reloading the page
+        // a tab is read from the switch the first time it is opened; after a change the changed section is read again
         var reading = false;
-        var lastRead = 0;
-        var CONFIG_REFRESH = 60;
         function readTab() {
             if (!data) { return; }
             if (reading) { draw(); return; }  // the tab changed during a read: it is read when that one ends
-            read(group);
+            var missing = $.grep(Object.keys(data.catalog || {}), function (n) {
+                return data.catalog[n].group === group && (data.sections || {})[n] === undefined && !(data.errors || {})[n];
+            });
+            if (missing.length) { read(group); }
             draw();
         }
-        setInterval(function () {
-            if (document.hidden || reading || $('.instanton-modal').length || !data) { return; }
-            if (Date.now() / 1000 - lastRead >= CONFIG_REFRESH) { readTab(); } else { updateStamp(); }
-        }, 5000);
         function updateStamp() {
-            page.$content.find('.instanton-config-stamp').html(reading ? icon('spinner fa-pulse') + ' reading from the switch...' :
-                (lastRead ? 'updated ' + esc(ago(lastRead)) + ' &middot; refreshes every minute' : ''));
+            page.$content.find('.instanton-config-stamp').html(reading ? icon('spinner fa-pulse') + ' reading from the switch...' : '');
         }
 
         function after(section) {
