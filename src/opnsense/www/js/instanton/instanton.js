@@ -1730,9 +1730,6 @@
             if (missing.length) { read(group); }
             draw();
         }
-        function updateStamp() {
-            page.$content.find('.instanton-config-stamp').html(reading ? icon('spinner fa-pulse') + ' reading from the switch...' : '');
-        }
 
         function after(section) {
             return function () { return read(section || group); };
@@ -1981,9 +1978,8 @@
                 return '<li' + (g[0] === group ? ' class="active"' : '') + '><a href="#tab=' + esc(g[0]) + '" data-group="' + esc(g[0]) + '">' +
                     esc(g[1]) + '</a></li>';
             }).join('') + '</ul>';
-            var tools = '<div class="instanton-config-tools"><span class="instanton-config-stamp text-muted small"></span>' +
-                (canChange ? '' : ' <span class="text-muted small">' + icon('lock') + ' Changes are off: tick <b>Allow changes</b> in ' +
-                    '<a href="/ui/instanton/index/settings">Settings</a> to edit.</span>') + '</div>';
+            var tools = canChange ? '' : '<div class="instanton-config-tools"><span class="text-muted small">' + icon('lock') +
+                ' Changes are off: tick <b>Allow changes</b> in <a href="/ui/instanton/index/settings">Settings</a> to edit.</span></div>';
             page.$content.html(tabs + tools + '<div class="instanton-config-body"></div>');
             var $cb = page.$content.find('.instanton-config-body');
             if (group === 'system') { $cb.append(commonTasks()); }
@@ -1996,7 +1992,6 @@
                 setHashParam('tab', group);
                 readTab();
             });
-            updateStamp();
             window.scrollTo(0, scrollY);
         }
 
