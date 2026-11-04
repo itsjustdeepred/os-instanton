@@ -106,3 +106,11 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .instanton-map .map-group { background: rgba(58, 135, 173, 0.07); border-style: dashed; }
 .instanton-map .map-offline { border-color: #d9534f; background: rgba(217, 83, 79, 0.08); }
 .instanton-map .map-offline .map-label { text-decoration: line-through; }
+
+/* dialogs: the theme leaves the modal body without padding */
+.instanton-modal .modal-header { padding: 16px 24px; }
+.instanton-modal .modal-body { padding: 18px 24px 8px; }
+.instanton-modal .modal-footer { padding: 14px 24px; }
+.instanton-modal .form-group { margin-bottom: 14px; }
+.instanton-modal .help-block { margin-top: 4px; }
+.instanton-modal .instanton-port-tools { margin-top: 4px; }

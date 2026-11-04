@@ -430,6 +430,7 @@
         if (p.pvid) { lines.push('VLAN ' + p.pvid + (p.tagged ? ', tagged ' + p.tagged : '')); }
         if (p.errors) { lines.push(p.errors + ' errors'); }
         if (p.flaps) { lines.push(p.flaps + ' link drops in the switch log'); }
+        if (canChange) { lines.push('Click to change this port'); }
         return lines.join('\n');
     }
 
@@ -757,13 +758,18 @@
                 }});
                 $('#instanton-log-level').on('change', function () { logTable.render(); });
                 $('#instanton-only-up').on('change', function () { portTable.render(); });
-                $('#instanton-ports').on('click', '.instanton-port-edit', function () {
+                $('#instanton-ports').on('click', '.instanton-port-edit', function () { editPort($(this).data('port')); });
+                // a click on a port of the front panel opens its settings (or shows its row when changes are off)
+                $('#instanton-sw-panel').on('click', 'a.port[data-port]', function (e) {
+                    e.preventDefault();
                     var name = $(this).data('port');
-                    var p = $.grep(latestPorts, function (x) { return x.name === name; })[0];
-                    if (p) {
-                        portDialog(p, page.$banner, function () {
-                            api('service/refresh', 'POST').always(function () { page.reload(); });
-                        });
+                    setHashParam('port', name);
+                    if (canChange) {
+                        editPort(name);
+                    } else {
+                        $('.instanton-flash').removeClass('instanton-flash').removeData('flashed');
+                        portTable.render();
+                        highlightHash();
                     }
                 });
                 void fans;
@@ -807,7 +813,23 @@
             }));
             api('status/log/' + encodeURIComponent(sw.id || '')).done(function (ld) { logTable.setRows(ld.log || []); });
             highlightHash();
+            // arriving with #port=... (from the overview or a link): open that port once
+            var wanted = hashParam('port');
+            if (wanted && canChange && openedFromHash !== currentSwitch + '|' + wanted) {
+                openedFromHash = currentSwitch + '|' + wanted;
+                editPort(wanted);
+            }
         };
+
+        var openedFromHash = '';
+
+        function editPort(name) {
+            var p = $.grep(latestPorts, function (x) { return x.name === name; })[0];
+            if (!p || $('.instanton-modal').length) { return; }
+            portDialog(p, page.$banner, function () {
+                api('service/refresh', 'POST').always(function () { page.reload(); });
+            });
+        }
         page.reload();
     }
 
@@ -1234,7 +1256,7 @@
             '<h4 class="modal-title">' + esc(opts.title) + '</h4></div><div class="modal-body"></div>' +
             '<div class="modal-footer"><span class="instanton-modal-status text-muted pull-left"></span>' +
             '<button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>' +
-            '<button type="button" class="btn btn-primary instanton-ok">' + esc(opts.ok || 'Apply') + '</button></div></div></div></div>');
+            '<button type="button" class="btn btn-' + (opts.danger ? 'danger' : 'success') + ' instanton-ok">' + esc(opts.ok || 'Apply') + '</button></div></div></div></div>');
         var $body = $m.find('.modal-body');
         if (opts.intro) { $body.append('<p>' + opts.intro + '</p>'); }
         $.each(opts.fields || [], function (_, f) {
@@ -1484,7 +1506,7 @@
                 } else if (task === 'locate-on' || task === 'locate-off') {
                     applyChange('locate', {on: task === 'locate-on'}).done(done);
                 } else if (task === 'reboot') {
-                    dialog({title: 'Restart the switch', ok: 'Restart',
+                    dialog({title: 'Restart the switch', ok: 'Restart', danger: true,
                         intro: 'The running configuration is saved first (if "Save after each change" is on). Every port goes ' +
                             'down: access points, cameras and the connection to the firewall are lost for about two to five minutes.',
                         confirm: 'I understand that the whole network behind this switch stops while it restarts.',
@@ -1562,7 +1584,7 @@
                         if (fields[k] !== undefined) { keyFields[k] = fields[k]; }
                     });
                     if ($(this).hasClass('instanton-row-del')) {
-                        dialog({title: 'Delete row from ' + meta.title, ok: 'Delete',
+                        dialog({title: 'Delete row from ' + meta.title, ok: 'Delete', danger: true,
                             intro: 'Row: <code>' + esc($.map(keyFields, function (v, k) { return k + '=' + v; }).join(' ')) + '</code>',
                             confirm: 'Delete this row from the switch configuration.',
                             submit: function () {
