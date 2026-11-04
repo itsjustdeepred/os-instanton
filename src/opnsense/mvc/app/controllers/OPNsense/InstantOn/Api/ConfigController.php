@@ -38,7 +38,7 @@ use OPNsense\Core\Backend;
  */
 class ConfigController extends ApiControllerBase
 {
-    private const ACTIONS = ['port', 'poe', 'poe_cycle', 'system', 'time', 'syslog', 'locate', 'cable_test',
+    private const ACTIONS = ['port', 'vlans', 'poe', 'poe_cycle', 'system', 'time', 'syslog', 'locate', 'cable_test',
         'reboot', 'section', 'save'];
 
     private function decode($response)

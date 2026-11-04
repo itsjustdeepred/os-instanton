@@ -89,6 +89,24 @@ def _guard(port, what):
                           % (port['name'], what))
 
 
+# speed and duplex of a port: auto-negotiation, or a fixed speed and duplex
+PORT_MODES = {
+    'auto': ('automatic', {'autoNegotiationAdminEnabled': '1'}),
+    '10H': ('10 Mb/s half duplex', {'autoNegotiationAdminEnabled': '2', 'speedAdmin': '10', 'duplexAdminMode': '2'}),
+    '10F': ('10 Mb/s full duplex', {'autoNegotiationAdminEnabled': '2', 'speedAdmin': '10', 'duplexAdminMode': '3'}),
+    '100H': ('100 Mb/s half duplex', {'autoNegotiationAdminEnabled': '2', 'speedAdmin': '100', 'duplexAdminMode': '2'}),
+    '100F': ('100 Mb/s full duplex', {'autoNegotiationAdminEnabled': '2', 'speedAdmin': '100', 'duplexAdminMode': '3'}),
+    '1000F': ('1 Gb/s full duplex', {'autoNegotiationAdminEnabled': '2', 'speedAdmin': '1000', 'duplexAdminMode': '3'}),
+}
+
+
+def port_mode(port):
+    if port.get('auto_neg', True):
+        return 'auto'
+    speed = str(port.get('speed_admin') or '')
+    return '%s%s' % (speed, 'H' if port.get('duplex_admin') == 'half' else 'F')
+
+
 def management_vlan(config):
     mgmt = ((config or {}).get('sections') or {}).get('ManagementInterfaceGlobalSetting') or {}
     return str(mgmt.get('managementVLAN') or '1')
@@ -182,10 +200,54 @@ def plan(action, params, state, config=None):
             entry['adminState'] = '1' if enabled else '2'
             if enabled != port.get('enabled'):
                 notes.append('enabled' if enabled else 'disabled')
+        if params.get('mode') not in (None, ''):
+            mode = str(params['mode'])
+            if mode not in PORT_MODES:
+                raise ActionError('unknown speed and duplex %r' % mode)
+            if mode != port_mode(port):
+                _guard(port, 'changing its speed')
+                entry.update(PORT_MODES[mode][1])
+                notes.append('speed %s' % PORT_MODES[mode][0])
         if len(entry) == 1:
             raise ActionError('nothing to change')
         return [('Standard802_3List', 'set', {'Entry': entry})], \
             'Port %s: %s' % (_label(port), ', '.join(notes) or 'unchanged')
+    if action == 'vlans':
+        port = _port(state, params.get('port'))
+        _guard(port, 'changing its VLANs')
+        _confirm(params, 'Changing the VLANs of a port (its traffic can stop)')
+        known = {str(v.get('id')) for v in ((state or {}).get('switch') or {}).get('vlans', [])}
+        untagged = str(params.get('untagged') or '').strip()
+        tagged = sorted({str(v).strip() for v in (params.get('tagged') or []) if str(v).strip()}, key=lambda v: int(v) if v.isdigit() else 0)
+        for vid in [untagged] + tagged:
+            if not re.match(r'^\d{1,4}$', vid) or vid not in known:
+                raise ActionError('VLAN %s does not exist on the switch' % (vid or '(none)'))
+        tagged = [v for v in tagged if v != untagged]
+        old_untagged = str(port.get('untagged') or '').split(',')[0].strip()
+        old_tagged = {v.strip() for v in str(port.get('tagged') or '').split(',') if v.strip()}
+        remove = sorted(old_tagged - set(tagged), key=int)
+        add = sorted(set(tagged) - old_tagged, key=int)
+        changes = []
+        if remove:
+            changes.append(('VLANInterfaceISList', 'delete',
+                            {'Entry': {'interfaceName': port['name'], 'generalTaggedVLANs': ','.join(remove)}}))
+        entry = {'interfaceName': port['name']}
+        if add:
+            entry['generalTaggedVLANs'] = ','.join(add)
+        if untagged != old_untagged:
+            entry.update({'generalUntaggedVLANs': untagged, 'generalPVID': untagged})
+        if len(entry) > 1:
+            changes.append(('VLANInterfaceISList', 'set', {'Entry': entry}))
+        if not changes:
+            raise ActionError('nothing to change')
+        notes = []
+        if untagged != old_untagged:
+            notes.append('untagged VLAN %s' % untagged)
+        if add:
+            notes.append('tagged + %s' % ','.join(add))
+        if remove:
+            notes.append('tagged - %s' % ','.join(remove))
+        return changes, 'Port %s VLANs: %s' % (_label(port), ', '.join(notes))
     if action == 'poe':
         port = _port(state, params.get('port'))
         if not port.get('poe'):

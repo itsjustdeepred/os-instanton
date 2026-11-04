@@ -114,3 +114,9 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .instanton-modal .form-group { margin-bottom: 14px; }
 .instanton-modal .help-block { margin-top: 4px; }
 .instanton-modal .instanton-port-tools { margin-top: 4px; }
+
+/* VLANs in the port dialog */
+.instanton-vlan-edit { margin-bottom: 14px; }
+.instanton-vlan-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 4px 12px; }
+.instanton-vlan-grid label { font-weight: normal; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.instanton-vlan-ok-box { background: rgba(240, 173, 78, 0.12); padding: 6px 10px; border-radius: 6px; }

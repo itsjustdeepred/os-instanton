@@ -366,6 +366,31 @@ class ActionsTest(unittest.TestCase):
             {'name': '1/51', 'description': 'OPNsense', 'enabled': True, 'role': 'uplink', 'poe': None},
         ], 'sntp_list': [{'address': '192.0.2.9'}]}}
 
+    def test_port_vlans(self):
+        state = {'switch': {'vlans': [{'id': 1}, {'id': 20}, {'id': 30}, {'id': 40}], 'ports': [
+            {'name': '1/5', 'role': 'device', 'untagged': '1', 'tagged': '20,30', 'enabled': True},
+            {'name': '1/51', 'role': 'uplink', 'untagged': '1', 'tagged': '20', 'enabled': True}]}}
+        changes, summary = actions.plan('vlans', {'port': '1/5', 'untagged': '20', 'tagged': ['30', '40'], 'confirm': True}, state)
+        self.assertEqual(changes, [
+            ('VLANInterfaceISList', 'delete', {'Entry': {'interfaceName': '1/5', 'generalTaggedVLANs': '20'}}),
+            ('VLANInterfaceISList', 'set', {'Entry': {'interfaceName': '1/5', 'generalTaggedVLANs': '40',
+                                                      'generalUntaggedVLANs': '20', 'generalPVID': '20'}})])
+        self.assertIn('untagged VLAN 20', summary)
+        with self.assertRaisesRegex(actions.ActionError, 'leads to the firewall'):
+            actions.plan('vlans', {'port': '1/51', 'untagged': '1', 'tagged': [], 'confirm': True}, state)
+        with self.assertRaisesRegex(actions.ActionError, 'does not exist'):
+            actions.plan('vlans', {'port': '1/5', 'untagged': '99', 'tagged': [], 'confirm': True}, state)
+        with self.assertRaisesRegex(actions.ActionError, 'confirm'):
+            actions.plan('vlans', {'port': '1/5', 'untagged': '1', 'tagged': ['20'], 'confirm': False}, state)
+
+    def test_port_speed(self):
+        state = {'switch': {'ports': [{'name': '1/5', 'role': 'device', 'enabled': True, 'auto_neg': True}]}}
+        changes, _ = actions.plan('port', {'port': '1/5', 'mode': '100F'}, state)
+        self.assertEqual(changes[0][2]['Entry'], {'interfaceName': '1/5', 'autoNegotiationAdminEnabled': '2',
+                                                  'speedAdmin': '100', 'duplexAdminMode': '3'})
+        with self.assertRaisesRegex(actions.ActionError, 'nothing to change'):
+            actions.plan('port', {'port': '1/5', 'mode': 'auto'}, state)
+
     def test_link_to_other_switch_is_protected(self):
         state = {'switch': {'ports': [{'name': '1/24', 'enabled': True, 'role': 'switch', 'peer': 'bbbb-2',
                                        'poe': {'enabled': True, 'status': 'searching'}}]}}

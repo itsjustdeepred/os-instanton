@@ -689,6 +689,7 @@
     }
 
     var latestPorts = [];
+    var latestVlans = [];
     var multiSwitch = false;
     var switchList = [];
 
@@ -724,6 +725,7 @@
             canChange = !!(data.meta || {}).allow_changes;
             switchList = list;
             latestPorts = sw.ports || [];
+            latestVlans = sw.vlans || [];
             if (!portTable) {
                 var fans = $.map(sw.fans || [], function (f) { return 'fan ' + f.id + ': ' + f.status; }).join(', ');
                 page.$content.html(
@@ -1340,15 +1342,56 @@
             fields.push({name: 'poe', label: 'PoE enabled', type: 'checkbox', value: poe.enabled,
                 help: 'Turning PoE off powers down the connected access point, camera or phone.'});
         }
-        dialog({title: 'Port ' + p.name + (p.description ? ' - ' + p.description : ''), fields: fields,
-            extra: tools.children().length ? $('<div><label>Tools</label><div></div></div>').find('div').append(tools).end() : null,
+        // speed and duplex
+        var mode = p.auto_neg === false ? String(p.speed_admin || '') + (p.duplex_admin === 'half' ? 'H' : 'F') : 'auto';
+        if (!uplink) {
+            fields.push({name: 'mode', label: 'Speed and duplex', type: 'select', value: mode, options: [['auto', 'Automatic (recommended)'],
+                ['1000F', '1 Gb/s full duplex'], ['100F', '100 Mb/s full duplex'], ['100H', '100 Mb/s half duplex'],
+                ['10F', '10 Mb/s full duplex'], ['10H', '10 Mb/s half duplex']],
+                help: 'Leave it on automatic unless a device needs a fixed speed: both ends must then use the same setting.'});
+        }
+        // VLANs: one untagged VLAN (also the PVID) and any number of tagged VLANs
+        var curUntagged = String(p.untagged || p.pvid || '').split(',')[0];
+        var curTagged = $.grep(String(p.tagged || '').split(','), Boolean);
+        var vlanBox = $('<div class="instanton-vlan-edit"></div>');
+        if (uplink) {
+            vlanBox.html('<label>VLANs</label><p class="help-block small">' + icon('lock') + ' Untagged ' + esc(curUntagged || '-') +
+                (curTagged.length ? ', tagged ' + esc(curTagged.join(', ')) : '') + '. The VLANs of this port cannot be changed from here: it ' +
+                'leads to the firewall or to another monitored switch.</p>');
+        } else if (latestVlans.length) {
+            fields.push({name: 'untagged', label: 'Untagged VLAN', type: 'select', value: curUntagged,
+                options: $.map(latestVlans, function (vl) { return [[String(vl.id), vl.id + (vl.name ? ' - ' + vl.name : '')]]; }),
+                help: 'The VLAN of a device that does not use VLAN tags (computers, cameras, printers). Also the PVID of the port.'});
+            vlanBox.html('<label>Tagged VLANs</label><div class="instanton-vlan-grid">' + $.map(latestVlans, function (vl) {
+                return '<label><input type="checkbox" class="instanton-vlan-tag" value="' + esc(vl.id) + '"' +
+                    (curTagged.indexOf(String(vl.id)) >= 0 ? ' checked' : '') + '> ' + esc(vl.id) + (vl.name ? ' <span class="text-muted">' +
+                    esc(vl.name) + '</span>' : '') + '</label>';
+            }).join('') + '</div><p class="help-block small">For devices that carry several VLANs: access points, other switches, servers.</p>' +
+                '<div class="checkbox instanton-vlan-ok-box" style="display:none"><label><input type="checkbox" class="instanton-vlan-ok"> ' +
+                'I understand that the device on this port can lose its connection while the VLANs change.</label></div>');
+        }
+        var extra = $('<div></div>').append(vlanBox);
+        if (tools.children().length) { extra.append($('<div><label>Tools</label><div></div></div>').find('div').append(tools).end()); }
+        var $dlg = dialog({title: 'Port ' + p.name + (p.description ? ' - ' + p.description : ''), fields: fields, extra: extra, wide: true,
             submit: function (v) {
                 var steps = [];
                 var params = {port: p.name};
                 if (v.description !== (p.description || '')) { params.description = v.description; }
                 if (!uplink && v.enabled !== p.enabled) { params.enabled = v.enabled; }
+                if (!uplink && v.mode && v.mode !== mode) { params.mode = v.mode; }
                 if (Object.keys(params).length > 1) { steps.push(['port', params]); }
                 if (poe && v.poe !== poe.enabled && !(uplink && !v.poe)) { steps.push(['poe', {port: p.name, enabled: v.poe}]); }
+                if (!uplink && latestVlans.length) {
+                    var tagged = $dlg.find('.instanton-vlan-tag:checked').map(function () { return this.value; }).get();
+                    var changed = v.untagged !== curUntagged || tagged.sort().join(',') !== curTagged.slice().sort().join(',');
+                    if (changed) {
+                        if ($dlg.find('.instanton-vlan-ok').is(':checked')) {
+                            steps.push(['vlans', {port: p.name, untagged: v.untagged, tagged: tagged, confirm: true}]);
+                        } else {
+                            notice($notice, 'warning', 'The VLANs were not changed: tick the confirmation under Tagged VLANs.');
+                        }
+                    }
+                }
                 if (!steps.length) { notice($notice, 'info', 'Nothing changed.'); return null; }
                 var chain = $.Deferred().resolve().promise();
                 $.each(steps, function (_, s) {
@@ -1358,6 +1401,10 @@
                 });
                 return chain.always(after);
             }});
+        // the VLAN confirmation appears only once the VLANs are changed
+        $dlg.on('change', '.instanton-vlan-tag, [data-name=untagged]', function () {
+            $dlg.find('.instanton-vlan-ok-box').show();
+        });
     }
 
     // ---- configuration page --------------------------------------------
