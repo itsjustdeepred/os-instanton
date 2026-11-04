@@ -120,3 +120,4 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .instanton-fields dd { margin: 0; word-break: break-word; }
 .instanton-row-more { padding: 0 4px; white-space: nowrap; }
 .instanton-loading { text-align: center; padding: 60px 0; font-size: 14px; }
+.instanton-config-body .table-condensed > tbody > tr > td { padding-top: 3px; padding-bottom: 3px; }

@@ -241,6 +241,7 @@
             });
         });
         schedule();
+        $bar.data('stop', function () { clearInterval(timer); timer = null; });
         return $bar;
     }
 
@@ -1655,8 +1656,53 @@
         var order = $.grep(PREFERRED_COLUMNS[section] || [], function (k) { return varying.indexOf(k) >= 0; });
         $.each(KEY_COLUMNS, function (_, k) { if (varying.indexOf(k) >= 0 && order.indexOf(k) < 0) { order.push(k); } });
         $.each(varying, function (_, k) { if (order.indexOf(k) < 0) { order.push(k); } });
-        var shown = order.slice(0, MAX_COLUMNS);
+        // a running number next to the port name says nothing new
+        if (varying.indexOf('interfaceName') >= 0) {
+            order = $.grep(order, function (k) { return INDEX_COLUMNS.indexOf(k) < 0; }).concat(
+                $.grep(order, function (k) { return INDEX_COLUMNS.indexOf(k) >= 0; }));
+        }
+        var shown = $.grep(order, function (k) { return INDEX_COLUMNS.indexOf(k) < 0 || varying.indexOf('interfaceName') < 0; })
+            .slice(0, MAX_COLUMNS);
         return {shown: shown, same: same, more: $.grep(order, function (k) { return shown.indexOf(k) < 0; })};
+    }
+    var INDEX_COLUMNS = ['interfaceID', 'ifIndex', 'interfaceIndex', 'portIndex', 'interfaceType'];
+
+    // rows of ports with the same values in every shown column become one row: "1/1-1/24, 1/26"
+    function groupRows(rows, shown, keep) {
+        if (shown[0] !== 'interfaceName' || rows.length < 4) { return rows; }
+        var groups = {}, order = [];
+        $.each(rows, function (i, r) {
+            // protected ports (towards the firewall or another switch) always keep their own row
+            var key = (keep || []).indexOf(r.interfaceName) >= 0 ? 'own-' + i : JSON.stringify($.map(shown.slice(1), function (k) { return String(r[k] === undefined ? '' : r[k]); }));
+            if (!groups[key]) { groups[key] = []; order.push(key); }
+            groups[key].push(r);
+        });
+        if (order.length === rows.length) { return rows; }
+        return $.map(order, function (key) {
+            var list = groups[key];
+            if (list.length === 1) { return [list[0]]; }
+            var g = $.extend({}, list[0]);
+            g.interfaceName = portRanges($.map(list, function (r) { return r.interfaceName; }));
+            g.__group = list;
+            return [g];
+        });
+    }
+
+    function portRanges(names) {
+        var out = [], start = null, prev = null;
+        function flush() {
+            if (start === null) { return; }
+            out.push(start === prev ? start : start + '-' + prev);
+        }
+        $.each(names, function (_, n) {
+            var m = /^(.*\/)(\d+)$/.exec(n), pm = prev !== null ? /^(.*\/)(\d+)$/.exec(prev) : null;
+            if (m && pm && m[1] === pm[1] && +m[2] === +pm[2] + 1) { prev = n; return; }
+            flush();
+            start = n;
+            prev = n;
+        });
+        flush();
+        return out.join(', ');
     }
 
     function humanize(name) {
@@ -1698,6 +1744,7 @@
         var group = hashParam('tab') || 'system';
         currentSwitch = hashParam('sw');
         page.noMeta = true;
+        page.$bar.data('stop')();  // read on demand only: no periodic reload of this page
         page.$bar.find('.instanton-auto, .instanton-refresh').remove();
         var $pills = $('<div class="instanton-pills-holder"></div>').insertBefore(page.$content);
         function swPath() { return encodeURIComponent(currentSwitch || '_') + '/'; }
@@ -1721,13 +1768,17 @@
 
         // a tab is read from the switch the first time it is opened; after a change the changed section is read again
         var reading = false;
+        var tabRead = {};
         function readTab() {
             if (!data) { return; }
             if (reading) { draw(); return; }  // the tab changed during a read: it is read when that one ends
-            var missing = $.grep(Object.keys(data.catalog || {}), function (n) {
+            var missing = !tabRead[group] && $.grep(Object.keys(data.catalog || {}), function (n) {
                 return data.catalog[n].group === group && (data.sections || {})[n] === undefined && !(data.errors || {})[n];
-            });
-            if (missing.length) { read(group); }
+            }).length;
+            if (missing) {
+                tabRead[group] = true;  // once: sections the switch does not return are not asked again
+                read(group);
+            }
             draw();
         }
 
@@ -1887,10 +1938,11 @@
                         (/^VLAN/.test(name) && String(r.VLANID) === mgmt)) {
                         return '<span class="text-muted" title="Protected: management VLAN or port towards the firewall">' + icon('lock') + '</span>';
                     }
-                    return '<button class="btn btn-default btn-xs instanton-row-edit" title="Edit">' + icon('pencil') + '</button> ' +
-                        '<button class="btn btn-default btn-xs instanton-row-del" title="Delete">' + icon('trash') + '</button>';
+                    return '<button class="btn btn-default btn-xs instanton-row-edit" title="' + (r.__group ? 'Edit these ' +
+                        r.__group.length + ' ports together' : 'Edit') + '">' + icon('pencil') + '</button>' + (r.__group ? '' :
+                        ' <button class="btn btn-default btn-xs instanton-row-del" title="Delete">' + icon('trash') + '</button>');
                 }}] : [])});
-                t.setRows(tr.rows);
+                t.setRows(groupRows(tr.rows, cols, data.uplinks));
                 var rowOf = function (el) {
                     var $rows = $(el).closest('tbody').children('tr:not(.instanton-row-detail)');
                     return t.visibleRows()[$rows.index($(el).closest('tr')) + t.page * (t.pageSize || 0)];
@@ -1901,20 +1953,42 @@
                     $(this).find('i').toggleClass('fa-chevron-down fa-chevron-up');
                     if ($next.length) { $next.remove(); return; }
                     var row = rowOf(this);
+                    var members = row.__group || [row];
                     $tr.after('<tr class="instanton-row-detail"><td colspan="' + $tr.children().length + '"><dl class="instanton-fields">' +
                         $.map(layout.more, function (k) {
-                            return '<div><dt>' + esc(humanize(k)) + '</dt><dd>' + (row[k] === '' || row[k] === undefined ?
-                                '<span class="text-muted">-</span>' : esc(row[k])) + '</dd></div>';
+                            var vals = [];
+                            $.each(members, function (_, m) {
+                                var v = String(m[k] === undefined ? '' : m[k]);
+                                if (vals.indexOf(v) < 0) { vals.push(v); }
+                            });
+                            if (vals.length > 1) {
+                                return '<div><dt>' + esc(humanize(k)) + '</dt><dd class="text-muted">' + esc(vals.slice(0, 6).join(', ')) +
+                                    (vals.length > 6 ? ', ...' : '') + '</dd></div>';
+                            }
+                            return '<div><dt>' + esc(humanize(k)) + '</dt><dd>' + (vals[0] === '' ?
+                                '<span class="text-muted">-</span>' : esc(vals[0])) + '</dd></div>';
                         }).join('') + '</dl></td></tr>');
                 });
                 $body.on('click', '.instanton-row-edit, .instanton-row-del', function () {
                     var row = rowOf(this);
-                    var fields = scalarFields(row);
-                    var keyFields = {};
-                    $.each(['interfaceName', 'interfaceType', 'VLANID', 'unitID', 'IPAddress', 'IPAddr', 'MACAddress', 'ifIndex',
-                        'sessionId', 'index', 'name', 'userName', 'groupName', 'communityName', 'viewName'], function (_, k) {
-                        if (fields[k] !== undefined) { keyFields[k] = fields[k]; }
-                    });
+                    var members = row.__group || [row];
+                    var fields = scalarFields(members[0]);
+                    var keyOf = function (m) {
+                        var out = {};
+                        $.each(['interfaceName', 'interfaceType', 'VLANID', 'unitID', 'IPAddress', 'IPAddr', 'MACAddress', 'ifIndex',
+                            'sessionId', 'index', 'name', 'userName', 'groupName', 'communityName', 'viewName'], function (_, k) {
+                            if (m[k] !== undefined) { out[k] = m[k]; }
+                        });
+                        return out;
+                    };
+                    var keyFields = keyOf(members[0]);
+                    if (row.__group) {
+                        // the fields that identify each port differ: show the group, send each port on its own
+                        fields.interfaceName = row.interfaceName;
+                        $.each(keyFields, function (k) {
+                            if ($.grep(members, function (m) { return String(m[k]) !== String(members[0][k]); }).length) { delete fields[k]; }
+                        });
+                    }
                     if ($(this).hasClass('instanton-row-del')) {
                         dialog({title: 'Delete row from ' + meta.title, ok: 'Delete', danger: true,
                             intro: 'Row: <code>' + esc($.map(keyFields, function (v, k) { return k + '=' + v; }).join(' ')) + '</code>',
@@ -1925,19 +1999,20 @@
                             }});
                         return;
                     }
-                    dialog({title: meta.title, wide: true, confirm: confirmText,
-                        intro: 'Only changed fields are sent, together with the fields that identify the row.',
+                    dialog({title: meta.title + (row.__group ? ' - ' + members.length + ' ports' : ''), wide: true, confirm: confirmText,
+                        intro: (row.__group ? 'These ports share the same values; a change is applied to all of them. ' : '') +
+                            'Only changed fields are sent, together with the fields that identify the row.',
                         fields: $.map(fields, function (v, k) {
                             var f = valueInput(k, v);
                             if (keyFields[k] !== undefined) { f.readonly = true; f.type = 'text'; }
                             return [f];
                         }),
                         submit: function (vals) {
-                            var entry = $.extend({}, keyFields);
-                            var n = 0;
-                            $.each(vals, function (k, v) { if (keyFields[k] === undefined && String(v) !== String(fields[k])) { entry[k] = v; n++; } });
-                            if (!n) { notice(page.$banner, 'info', 'Nothing changed.'); return null; }
-                            return applyChange('section', {section: name, op: 'set', row: tr.tag, entries: [entry], confirm: true})
+                            var changed = {};
+                            $.each(vals, function (k, v) { if (keyFields[k] === undefined && String(v) !== String(fields[k])) { changed[k] = v; } });
+                            if (!Object.keys(changed).length) { notice(page.$banner, 'info', 'Nothing changed.'); return null; }
+                            var entries = $.map(members, function (m) { return [$.extend(keyOf(m), changed)]; });
+                            return applyChange('section', {section: name, op: 'set', row: tr.tag, entries: entries, confirm: true})
                                 .done(function (r) { changeResult(page.$banner, r); }).always(after(name));
                         }});
                 });
