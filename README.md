@@ -1,8 +1,8 @@
 # os-instanton
 
 OPNsense plugin that monitors HPE Networking (Aruba) Instant On switches and
-access points from the firewall web interface. It only reads: nothing is
-ever changed on the devices.
+access points from the firewall web interface and, when allowed, manages the
+switch configuration. By default it only reads.
 
 ## What it shows
 
@@ -10,10 +10,11 @@ ever changed on the devices.
 |---|---|
 | **Overview** | Status cards, health checks, recent events, switch front panel, access point list |
 | **Switch** | Device and health data (temperature, fans, PSU, PoE budget, clock, unsaved config, web sessions), front panel, every port with link, role, LLDP neighbour, VLANs, PoE, throughput, totals, learned MACs, errors and link flaps, VLAN table, switch log with level filter |
-| **Access Points** | Model, IP, uplink port/speed/PoE, wireless clients, firmware, serial, coordinator, cloud and time-sync status, last restart reason (crashes highlighted); cloud inventory with radios when the cloud source is on |
+| **Access Points** | Model, IP, uplink port/speed/PoE, wireless clients, firmware, serial, coordinator, cloud status, clock check, last restart reason (crashes highlighted); cloud inventory with radios when the cloud source is on |
 | **Clients** | Every learned device with name, IP, MAC/vendor, private-MAC detection, access point or port, VLAN, first/last seen, signal (cloud); filters and CSV export |
 | **Events** | Port up/down, access point offline/restart/firmware/coordinator changes, new devices, PoE faults, polling failures; also sent to syslog |
-| **Settings** | Sources, credentials, polling, thresholds, with field help, service control and a connection test |
+| **Configuration** | Every switch configuration section, grouped like the switch menus, with common tasks (name, time and time server, remote syslog, save, locator LED, restart) and a generic editor |
+| **Settings** | Sources, credentials, polling, thresholds, change permission, with field help, service control and a connection test |
 | **Dashboard widget** | Switch, access points, clients, PoE and open problems |
 
 ### Health checks
@@ -22,8 +23,39 @@ Wrong switch clock or missing SNTP server, unsaved switch configuration,
 unexpected restart, temperature/fan/PSU alarms, PoE budget usage, ports
 that keep going down (switch-wide outages are ignored), packet errors,
 half duplex, access points linked below 1 Gb/s, PoE faults, unreachable
-access points, failing NTP on access points, firmware crashes, meshed
-access points, mixed firmware, devices without IP or name.
+access points, wrong clock on access points, SNTP server not answering the
+switch, firmware crashes, meshed access points, mixed firmware, devices
+without IP or name.
+
+## Changing the switch
+
+Off until **Allow changes** is ticked in Settings (the switch account then
+needs administrator rights). Changes are sent the way the switch web
+interface sends them (`<Section action="set|add|delete">` documents POSTed
+to `/device/wcd`), then saved to the startup configuration unless
+**Save after each change** is off.
+
+* **Switch page**: per port description, enable/disable, PoE on/off, PoE
+  power cycle, cable test.
+* **Configuration page**: system name/location/contact, SNTP server, time
+  zone and daylight saving, remote syslog, save, locator LED, restart; and a
+  generic editor for the 148 sections the switch interface can change.
+
+Protection against locking the firewall out:
+
+| Level | Sections | Behaviour |
+|---|---|---|
+| normal | logging, LLDP, SNMP, multicast, PoE, time, ... | applied directly |
+| caution | ports, VLANs, spanning tree, LAG, QoS, DHCP snooping, ARP inspection, 802.1X, storm control, relays, ... | explicit confirmation required |
+| blocked | management address and VLAN, IP interfaces and routes, accounts and passwords, login authentication, RADIUS, web service, certificates, firmware images, access lists and policies | read-only |
+
+In every section, rows of the port that leads to the firewall are refused,
+and the management VLAN cannot be deleted. Every change is validated before
+the switch is contacted and recorded in Events and syslog (area `change`).
+
+Access points take their configuration from the Instant On cloud and have
+no local configuration interface; they can be power-cycled through their
+PoE port.
 
 ## Data sources
 
@@ -72,19 +104,30 @@ and the collected data (settings stay in `config.xml`).
 | `/var/db/instanton/state.json` | Latest snapshot |
 | `/var/db/instanton/clients.json` | Device history (first/last seen) |
 | `/var/db/instanton/events.json` | Event history |
+| `/var/db/instanton/config.json` | Switch configuration sections read for the Configuration page |
 | `/var/log/instanton/` | Syslog output (Services > Instant On > Log File) |
 
 configd actions: `instanton start|stop|restart|status|refresh|test`,
-`instanton view <summary|switch|ports|aps|clients|events|log|insights|all>`.
+`instanton view <summary|switch|ports|aps|clients|events|log|insights|all>`,
+`instanton readconfig <group|Section|all|cached>`,
+`instanton configure <base64url JSON request>`.
 
-API (all read-only except the service endpoints):
+API:
 
 ```
 GET  /api/instanton/status/{summary,switch,ports,aps,clients,events,log,insights}
 GET  /api/instanton/settings/get        POST /api/instanton/settings/set
 POST /api/instanton/service/{start,stop,restart,reconfigure,refresh,test}
 GET  /api/instanton/service/status
+GET  /api/instanton/config/read/cached   POST /api/instanton/config/read/{group|Section|all}
+POST /api/instanton/config/apply         request={"action": ..., "params": {...}}
 ```
+
+Actions: `port`, `poe`, `poe_cycle`, `system`, `time`, `syslog`, `locate`,
+`cable_test`, `reboot`, `save`, `section` (generic: `section`, `op`
+set/add/delete/deleteAll, `values` or `entries`, `confirm`). The ACL
+*Services: Instant On: change switch* grants `config/apply`; the base ACL
+only reads.
 
 `refresh` asks the running monitor to poll at once (SIGUSR1), or runs one
 poll when the monitor is stopped. It also appears in the cron job action

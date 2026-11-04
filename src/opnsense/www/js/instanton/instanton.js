@@ -123,18 +123,26 @@
             '<li><b>Neighbour</b> comes from LLDP: devices that announce themselves (access points, other switches).</li>' +
             '<li><b>Role</b>: <i>ap</i> access point, <i>uplink</i> towards the firewall (its addresses are not listed ' +
             'as clients), <i>switch</i> another switch, <i>device</i> anything else.</li></ul>' +
-            '<p>The plugin never changes the switch configuration.</p>',
+            '<p><b>Changes</b>: when <i>Allow changes</i> is on in Settings, the ' + icon('pencil') + ' button at the end of ' +
+            'each port row edits the description, switches the port or its PoE power on and off, power-cycles the connected ' +
+            'device and starts a cable test. The port that leads to the firewall cannot be switched off. Every change is ' +
+            'saved on the switch (unless disabled in Settings) and listed under Events. More settings are on the ' +
+            '<a href="/ui/instanton/index/configuration">Configuration</a> page.</p>' +
+            '<p><b>Time server</b>: <i>no answer</i> means the switch asks the server for the time but gets no reply; when the ' +
+            'server is this firewall, check that a rule on the switch network allows UDP port 123 to the firewall.</p>',
         accesspoints: '<p>Access points are found through the switch (LLDP) or added by address in Settings. Each one ' +
             'publishes a diagnostic page on port 8080 that the plugin reads without a password.</p>' +
             '<ul><li><b>Coordinator</b>: the access point that manages the others (the "swarm" master).</li>' +
             '<li><b>Last restart</b>: <i>Power-reset</i> is a normal power cycle; <i>Panic</i> or <i>assert</i> means ' +
             'the firmware crashed. Repeated crashes are worth reporting to HPE support or updating the firmware.</li>' +
-            '<li><b>Time sync</b>: access points take the time from the gateway. ERROR means the NTP service of the ' +
-            'firewall does not answer them.</li>' +
+            '<li><b>Time</b>: access points try NTP once while starting, often before their network is up, and then take ' +
+            'the time from the Instant On cloud. The plugin compares their clock with the firewall: <i>correct</i> is fine even ' +
+            'when the access point itself reports an NTP error.</li>' +
             '<li><b>Clients</b> counts devices seen on the switch port of the access point. Clients of a meshed access ' +
             'point are counted on the access point it is meshed to.</li></ul>' +
             '<p>Radio channels, SSIDs and signal levels are only known to the Instant On cloud: enable the cloud source ' +
-            'in Settings to see them.</p>',
+            'in Settings to see them. Access points cannot be changed from here: they take their settings from the Instant On ' +
+            'app or portal and offer no local configuration interface. Their PoE port can be power-cycled from the Switch page.</p>',
         clients: '<p>Every device the switch has learned, enriched with the IP address and name the firewall knows ' +
             '(ARP table, DHCP leases and static mappings).</p>' +
             '<ul><li><b>Wireless</b> devices are those learned on an access point port. Without the cloud source the ' +
@@ -144,11 +152,29 @@
             '<li><b>Offline</b> devices are kept for the history period set in Settings.</li>' +
             '<li>Devices without an IP are usually on a VLAN the firewall does not route, use a static address, or ' +
             'have been quiet for a while.</li></ul>',
+        configuration: '<p>The configuration of the switch, read from its local web interface and grouped like its menus. ' +
+            'Sections are read when a tab is opened; <b>Read from switch</b> refreshes the tab, <b>Read everything</b> ' +
+            'loads all sections (about 30 seconds).</p>' +
+            '<ul><li>The <b>System</b> tab starts with the common tasks: name, time and time server, remote syslog, saving the ' +
+            'configuration, the locator LED and restarting the switch.</li>' +
+            '<li>Other sections show the values as the switch stores them. Most switches use <i>1</i> for on and <i>2</i> ' +
+            'for off; such fields are shown as a choice. Field names are those of the switch interface.</li>' +
+            '<li>' + badge('caution', 'warning') + ' sections can interrupt traffic (VLANs, spanning tree, link ' +
+            'aggregation, filtering, QoS, port settings): you are asked to confirm each change.</li>' +
+            '<li>' + badge('read-only', 'danger') + ' sections control access to the switch (management address and VLAN, ' +
+            'accounts and passwords, login authentication, web service, certificates, firmware, access lists). They are ' +
+            'never changed by the plugin, so a mistake cannot lock the firewall out of the switch.</li>' +
+            '<li>Rows of the port that leads to the firewall are protected in every section.</li></ul>' +
+            '<p>Each change is checked, sent to the switch, saved to its startup configuration (see Settings) and recorded ' +
+            'under <a href="/ui/instanton/index/events">Events</a>. Editing needs <b>Allow changes</b> in ' +
+            '<a href="/ui/instanton/index/settings">Settings</a> and an administrator account on the switch.</p>',
         events: '<p>Changes detected between two polls: ports going up or down, access points going offline or ' +
-            'restarting, firmware changes, new devices on the network, PoE faults and polling errors. The same events ' +
+            'restarting, firmware changes, new devices on the network, PoE faults and polling errors, plus every ' +
+            'configuration change made from the plugin (area <i>change</i>). The same events ' +
             'are written to the system log (<a href="/ui/diagnostics/log/core/instanton">Log File</a>), so they can be ' +
             'forwarded to a remote syslog server or used for notifications.</p>',
-        settings: '<p>The plugin only <b>reads</b>: it never changes the switch or the access points.</p>' +
+        settings: '<p>By default the plugin only <b>reads</b>. Tick <b>Allow changes</b> to manage the switch from the Switch ' +
+            'and Configuration pages; management access, accounts, firmware and the port towards the firewall stay protected.</p>' +
             '<ol><li>Enter the switch address and an account of its web interface.</li>' +
             '<li>Keep <i>Discover through the switch</i> on; add meshed access points by address.</li>' +
             '<li>Press <b>Test connection</b>, then tick <b>Enable monitor</b> and <b>Apply</b>.</li></ol>' +
@@ -459,8 +485,10 @@
         }
         this.loader().done(function (data) {
             data = data || {};
-            self.$banner.html(statusBanner(data.meta, data.error));
-            updateAge(self.$bar, data.meta);
+            if (!self.noMeta) {
+                self.$banner.html(statusBanner(data.meta, data.error));
+                updateAge(self.$bar, data.meta);
+            }
             self.render(data);
         }).fail(function (xhr) {
             self.$banner.html(statusBanner(null, 'Cannot load data (HTTP ' + xhr.status + ').'));
@@ -579,10 +607,14 @@
                     if (!a.cloud_status) { return ''; }
                     return a.cloud_status === 'CONNECTED' ? badge('connected', 'success') : badge(a.cloud_status, 'warning', a.cloud_reason);
                 }},
-                {label: 'Time sync', title: 'NTP status reported by the access point', key: 'ntp_status', render: function (a) {
-                    if (!a.ntp_status) { return ''; }
-                    return a.ntp_status === 'ERROR' ? badge('failing', 'warning', 'NTP server ' + (a.ntp_server || '?') + ' does not answer')
-                        : badge(a.ntp_status.toLowerCase(), 'success');
+                {label: 'Time', title: 'Clock of the access point compared with the firewall, and where it got the time',
+                    key: 'clock_skew', render: function (a) {
+                    var src = a.time_source ? ' <span class="small text-muted">' + esc(a.time_source.toLowerCase()) + '</span>' : '';
+                    if (a.clock_skew === null || a.clock_skew === undefined) { return a.ntp_status ? esc(a.ntp_status) : ''; }
+                    if (Math.abs(a.clock_skew) > 300) {
+                        return badge('off by ' + duration(Math.abs(a.clock_skew)), 'warning', 'NTP ' + (a.ntp_status || '') + ', server ' + (a.ntp_server || '?')) + src;
+                    }
+                    return badge('correct', 'success', 'NTP status ' + (a.ntp_status || '?') + (a.ntp_log ? ': ' + a.ntp_log : '')) + src;
                 }},
                 {label: 'Last restart', key: 'reboot_cause', render: function (a) {
                     return a.crashed ? '<span class="text-danger">' + icon('bug') + ' ' + esc(a.reboot_cause) + '</span>' : esc(a.reboot_cause);
@@ -591,6 +623,8 @@
         }
         return cols;
     }
+
+    var latestPorts = [];
 
     function switchPage($root) {
         var page = new Page('switch', $root);
@@ -604,6 +638,8 @@
                     esc(sw.error || 'unknown error') + '</p>'));
                 return;
             }
+            canChange = !!(data.meta || {}).allow_changes;
+            latestPorts = sw.ports || [];
             if (!portTable) {
                 var fans = $.map(sw.fans || [], function (f) { return 'fan ' + f.id + ': ' + f.status; }).join(', ');
                 page.$content.html(
@@ -638,6 +674,15 @@
                 }});
                 $('#instanton-log-level').on('change', function () { logTable.render(); });
                 $('#instanton-only-up').on('change', function () { portTable.render(); });
+                $('#instanton-ports').on('click', '.instanton-port-edit', function () {
+                    var name = $(this).data('port');
+                    var p = $.grep(latestPorts, function (x) { return x.name === name; })[0];
+                    if (p) {
+                        portDialog(p, page.$banner, function () {
+                            api('service/refresh', 'POST').always(function () { page.reload(); });
+                        });
+                    }
+                });
                 void fans;
             }
             var uptime = duration(sw.uptime);
@@ -659,7 +704,9 @@
                     '" style="width:' + Math.min(100, sw.poe.percent) + '%"></div></div>' : ''],
                 ['Clock', skew === null || skew === undefined ? '' : (Math.abs(skew) > 300 ?
                     '<span class="text-warning">' + icon('clock-o') + ' off by ' + esc(duration(Math.abs(skew))) + '</span>' : badge('in sync', 'success'))
-                    + (sw.sntp_servers ? '' : ' <span class="text-muted small">no SNTP server</span>'), 'Difference between the switch clock and the firewall clock'],
+                    + ' <span class="text-muted small">' + esc((sw.timezone_name || '') + ' UTC' + (sw.timezone || '')) + '</span>',
+                    'Difference between the switch clock and the firewall clock, and the time zone of the switch'],
+                ['Time server', sntpStatus(sw), 'SNTP servers configured on the switch and whether they answer'],
                 ['Configuration', sw.config_saved ? badge('saved', 'success') : badge('unsaved changes', 'warning')],
                 ['Web sessions', $.map(sw.sessions || [], function (s) { return esc(s.user + ' from ' + s.address); }).join('<br>'), 'Users logged in to the switch web interface right now']
             ])));
@@ -680,6 +727,19 @@
         page.reload();
     }
 
+    function sntpStatus(sw) {
+        var list = sw.sntp_list || [];
+        if (!list.length) {
+            return '<span class="text-warning">none</span>' + (sw.time_mode === 'manual' ? ' <span class="text-muted small">(manual clock)</span>' : '');
+        }
+        return $.map(list, function (s) {
+            if (s.last_response) {
+                return esc(s.address) + ' ' + badge('answering', 'success', 'Last answer ' + datetime(s.last_response));
+            }
+            return esc(s.address) + ' ' + badge('no answer', 'warning', 'The switch sends requests but the server never answered');
+        }).join('<br>');
+    }
+
     function highlightHash() {
         var m = /#port-(.+)$/.exec(window.location.hash);
         if (!m) { return; }
@@ -691,7 +751,7 @@
     }
 
     function portColumns() {
-        return [
+        var cols = [
             {label: 'Port', key: 'name', sortValue: function (p) { return p.id; }, render: function (p) {
                 return '<a id="port-' + esc(p.name) + '"></a><b>' + esc(p.name) + '</b>';
             }},
@@ -743,6 +803,13 @@
                 sortValue: function (p) { return p.flaps; },
                 render: function (p) { return p.flaps ? '<span class="' + (p.flaps >= 5 ? 'text-warning' : 'text-muted') + '">' + esc(p.flaps) + '</span>' : ''; }}
         ];
+        if (canChange) {
+            cols.push({label: '', sort: false, csv: false, render: function (p) {
+                return '<button type="button" class="btn btn-default btn-xs instanton-port-edit" data-port="' + esc(p.name) +
+                    '" title="Description, enable/disable, PoE, power-cycle, cable test">' + icon('pencil') + '</button>';
+            }});
+        }
+        return cols;
     }
 
     function accessPointsPage($root) {
@@ -939,9 +1006,461 @@
         }).join(''));
     }
 
+    // ------------------------------------------------------------------
+    // configuration changes
+    // ------------------------------------------------------------------
+    var canChange = false;
+
+    function applyChange(action, params) {
+        return $.ajax({url: API + 'config/apply', type: 'POST', dataType: 'json', cache: false,
+            data: {request: JSON.stringify({action: action, params: params || {}})}});
+    }
+
+    function notice($target, kind, html) {
+        var $n = $('<div class="alert alert-' + kind + ' alert-dismissible instanton-notice">' +
+            '<button type="button" class="close" data-dismiss="alert" aria-label="Close">&times;</button>' + html + '</div>');
+        $target.prepend($n);
+        if (kind === 'success') { setTimeout(function () { $n.fadeOut(400, function () { $n.remove(); }); }, 8000); }
+        return $n;
+    }
+
+    function changeResult($target, res) {
+        if (res && res.status === 'ok') {
+            notice($target, 'success', icon('check-circle') + ' ' + esc(res.message) +
+                (res.saved === false ? ' <b>Not saved</b>: it is lost when the switch restarts.' : ''));
+            return true;
+        }
+        notice($target, 'danger', icon('times-circle') + ' ' + esc((res && res.message) || 'The change failed.'));
+        return false;
+    }
+
+    // simple Bootstrap 3 modal; fields: [{name, label, type, value, options, help}]
+    function dialog(opts) {
+        var $m = $('<div class="modal fade instanton-modal" tabindex="-1" role="dialog"><div class="modal-dialog' +
+            (opts.wide ? ' modal-lg' : '') + '" role="document"><div class="modal-content"><div class="modal-header">' +
+            '<button type="button" class="close" data-dismiss="modal" aria-label="Close">&times;</button>' +
+            '<h4 class="modal-title">' + esc(opts.title) + '</h4></div><div class="modal-body"></div>' +
+            '<div class="modal-footer"><span class="instanton-modal-status text-muted pull-left"></span>' +
+            '<button type="button" class="btn btn-default" data-dismiss="modal">Cancel</button>' +
+            '<button type="button" class="btn btn-primary instanton-ok">' + esc(opts.ok || 'Apply') + '</button></div></div></div></div>');
+        var $body = $m.find('.modal-body');
+        if (opts.intro) { $body.append('<p>' + opts.intro + '</p>'); }
+        $.each(opts.fields || [], function (_, f) {
+            var id = 'instanton-f-' + Math.random().toString(36).slice(2);
+            var input;
+            if (f.type === 'checkbox') {
+                input = '<div class="checkbox"><label><input type="checkbox" id="' + id + '" data-name="' + esc(f.name) + '"' +
+                    (f.value ? ' checked' : '') + '> ' + esc(f.label) + '</label></div>';
+            } else if (f.type === 'select') {
+                input = '<label for="' + id + '">' + esc(f.label) + '</label><select class="form-control" id="' + id + '" data-name="' +
+                    esc(f.name) + '">' + $.map(f.options, function (o) {
+                        return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(f.value) ? ' selected' : '') + '>' + esc(o[1]) + '</option>';
+                    }).join('') + '</select>';
+            } else {
+                input = '<label for="' + id + '">' + esc(f.label) + '</label><input type="text" class="form-control" id="' + id +
+                    '" data-name="' + esc(f.name) + '" value="' + esc(f.value) + '"' + (f.placeholder ? ' placeholder="' + esc(f.placeholder) + '"' : '') +
+                    (f.readonly ? ' readonly' : '') + '>';
+            }
+            $body.append('<div class="form-group">' + input + (f.help ? '<p class="help-block small">' + f.help + '</p>' : '') + '</div>');
+        });
+        if (opts.confirm) {
+            $body.append('<div class="alert alert-warning instanton-confirm"><label style="font-weight:normal"><input type="checkbox" ' +
+                'class="instanton-confirm-box"> ' + opts.confirm + '</label></div>');
+        }
+        if (opts.extra) { $body.append(opts.extra); }
+        var $ok = $m.find('.instanton-ok');
+        if (opts.confirm) {
+            $ok.prop('disabled', true);
+            $m.find('.instanton-confirm-box').on('change', function () { $ok.prop('disabled', !this.checked); });
+        }
+        $ok.on('click', function () {
+            var values = {};
+            $body.find('[data-name]').each(function () {
+                var $i = $(this);
+                values[$i.data('name')] = $i.is(':checkbox') ? $i.is(':checked') : $i.val();
+            });
+            $ok.prop('disabled', true);
+            $m.find('.instanton-modal-status').html(icon('spinner fa-pulse') + ' Talking to the switch...');
+            $.when(opts.submit(values)).always(function () { $m.modal('hide'); });
+        });
+        $m.on('hidden.bs.modal', function () { $m.remove(); });
+        $('body').append($m);
+        $m.modal('show');
+        return $m;
+    }
+
+    function portDialog(p, $notice, after) {
+        var poe = p.poe;
+        var uplink = p.role === 'uplink';
+        var tools = $('<div class="instanton-port-tools"></div>');
+        if (poe && poe.enabled) {
+            tools.append($('<button type="button" class="btn btn-default btn-sm">' + icon('power-off') + ' Power-cycle PoE</button>')
+                .on('click', function () {
+                    $(this).closest('.modal').modal('hide');
+                    dialog({title: 'Power-cycle PoE on port ' + p.name, ok: 'Power-cycle',
+                        intro: 'Power to the device on this port is cut for a moment and restored. Use it to restart a hung ' +
+                            'access point, camera or phone. The device needs its usual boot time to come back.',
+                        submit: function () { return applyChange('poe_cycle', {port: p.name}).done(function (r) { changeResult($notice, r); after(); }); }});
+                }));
+        }
+        if (!uplink) {
+            tools.append(' ', $('<button type="button" class="btn btn-default btn-sm">' + icon('stethoscope') + ' Test cable</button>')
+                .on('click', function () {
+                    $(this).closest('.modal').modal('hide');
+                    dialog({title: 'Cable test on port ' + p.name, ok: 'Start test',
+                        intro: 'The switch measures the copper pairs of the cable (length, open or short circuits). ' +
+                            'The results appear in the switch web interface under Diagnostics &gt; Cable Test, or on the ' +
+                            '<a href="/ui/instanton/index/configuration#ports">Configuration</a> page (Cable test section).',
+                        confirm: 'The link of this port drops for a few seconds during the test.',
+                        submit: function () { return applyChange('cable_test', {port: p.name, confirm: true}).done(function (r) { changeResult($notice, r); }); }});
+                }));
+        }
+        var fields = [
+            {name: 'description', label: 'Description', value: p.description, help: 'Shown on the switch and in this plugin; ' +
+                'a port with one device and a description names that device in the client list. Up to 64 characters.'},
+            {name: 'enabled', label: 'Port enabled', type: 'checkbox', value: p.enabled, help: uplink ?
+                '<b>This port leads to the firewall and cannot be switched off from here.</b>' :
+                'A disabled port carries no traffic and gives no PoE power.'}
+        ];
+        if (poe) {
+            fields.push({name: 'poe', label: 'PoE enabled', type: 'checkbox', value: poe.enabled,
+                help: 'Turning PoE off powers down the connected access point, camera or phone.'});
+        }
+        dialog({title: 'Port ' + p.name + (p.description ? ' - ' + p.description : ''), fields: fields,
+            extra: tools.children().length ? $('<div><label>Tools</label><div></div></div>').find('div').append(tools).end() : null,
+            submit: function (v) {
+                var steps = [];
+                var params = {port: p.name};
+                if (v.description !== (p.description || '')) { params.description = v.description; }
+                if (!uplink && v.enabled !== p.enabled) { params.enabled = v.enabled; }
+                if (Object.keys(params).length > 1) { steps.push(['port', params]); }
+                if (poe && v.poe !== poe.enabled) { steps.push(['poe', {port: p.name, enabled: v.poe}]); }
+                if (!steps.length) { notice($notice, 'info', 'Nothing changed.'); return null; }
+                var chain = $.Deferred().resolve().promise();
+                $.each(steps, function (_, s) {
+                    chain = chain.then(function () {
+                        return applyChange(s[0], s[1]).then(function (r) { changeResult($notice, r); });
+                    });
+                });
+                return chain.always(after);
+            }});
+    }
+
+    // ---- configuration page --------------------------------------------
+    var TZ_OFFSETS = ['-12:00', '-11:00', '-10:00', '-09:30', '-09:00', '-08:00', '-07:00', '-06:00', '-05:00', '-04:00',
+        '-03:30', '-03:00', '-02:00', '-01:00', '+00:00', '+01:00', '+02:00', '+03:00', '+03:30', '+04:00', '+04:30',
+        '+05:00', '+05:30', '+05:45', '+06:00', '+06:30', '+07:00', '+08:00', '+09:00', '+09:30', '+10:00', '+10:30',
+        '+11:00', '+12:00', '+12:45', '+13:00', '+14:00'];
+    var RISK = {
+        normal: ['', ''],
+        caution: ['warning', 'Can interrupt traffic: changes need a confirmation'],
+        blocked: ['danger', 'Controls access to the switch: read-only here, change it from the switch web interface']
+    };
+
+    function humanize(name) {
+        return String(name).replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+            .replace(/^./, function (c) { return c.toUpperCase(); });
+    }
+
+    function isFlagField(name, value) {
+        return (value === '1' || value === '2') && /(enable|enabled|enbl|state|status|mode)$/i.test(name);
+    }
+
+    function scalarFields(obj) {
+        var out = {};
+        $.each(obj || {}, function (k, v) { if (v === null || typeof v !== 'object') { out[k] = v; } });
+        return out;
+    }
+
+    function tableRows(section, rowTag) {
+        if (!section || typeof section !== 'object') { return {tag: rowTag, rows: []}; }
+        var keys = Object.keys(section);
+        var tag = rowTag && section[rowTag] !== undefined ? rowTag : (keys.length === 1 ? keys[0] : rowTag);
+        var rows = section[tag];
+        if (!rows) { return {tag: tag, rows: []}; }
+        return {tag: tag, rows: $.isArray(rows) ? rows : [rows]};
+    }
+
+    function valueInput(name, value) {
+        if (isFlagField(name, value)) {
+            return {name: name, label: humanize(name), type: 'select', value: value,
+                options: [['1', 'enabled (1)'], ['2', 'disabled (2)']]};
+        }
+        return {name: name, label: humanize(name), value: value};
+    }
+
+    function configurationPage($root) {
+        var page = new Page('configuration', $root);
+        var data = null;
+        var group = (window.location.hash || '#system').slice(1);
+        page.noMeta = true;
+        page.$bar.find('.instanton-auto, .instanton-refresh').remove();
+        page.loader = function () { return $.ajax({url: API + 'config/read/cached', dataType: 'json', cache: false}); };
+
+        function read(what) {
+            var $btn = page.$content.find('.instanton-read');
+            $btn.prop('disabled', true).find('i').addClass('fa-spin');
+            return $.ajax({url: API + 'config/read/' + encodeURIComponent(what), type: 'POST', dataType: 'json', cache: false})
+                .done(function (d) {
+                    if (d.status !== 'ok') { notice(page.$banner, 'danger', esc(d.message || 'Cannot read the switch.')); return; }
+                    data = d;
+                    draw();
+                }).always(function () { $btn.prop('disabled', false).find('i').removeClass('fa-spin'); });
+        }
+
+        function after(section) {
+            return function () { return read(section || group); };
+        }
+
+        function commonTasks() {
+            var sw = data.sections || {};
+            var sys = sw.SystemGlobalSetting || {};
+            var ts = sw.TimeSetting || {};
+            var tz = ts.TimeZone || {};
+            var servers = tableRows(sw.SNTPServerTable, 'SNTPServerEntry').rows;
+            var sys_srv = tableRows(sw.SyslogServerList, 'SyslogServer').rows;
+            var dst = ts.dayLightSavingMode === '3' || !ts.dayLightSavingMode ? 'off' : 'custom';
+            var rec = (ts.DayLightSaving || {}).RecurrentPeriod || {};
+            if (dst === 'custom' && rec.endMonth === '10' && rec.beginWeek === '06') { dst = 'eu'; }
+            if (dst === 'custom' && rec.endMonth === '11' && rec.beginWeek === '02') { dst = 'us'; }
+            var off = String(tz.offsetHour || '00');
+            off = (off.charAt(0) === '-' ? '-' : '+') + ('0' + off.replace(/^[+-]/, '')).slice(-2) + ':' + ('0' + (tz.offsetMinute || '0')).slice(-2);
+            var html = '<div class="row">' +
+                '<div class="col-md-6">' + section('System', kv([
+                    ['Name', esc(sys.systemName)], ['Location', esc(sys.systemLocation)], ['Contact', esc(sys.systemContact)]
+                ]) + '<button class="btn btn-default btn-sm" data-task="system">' + icon('pencil') + ' Edit</button>') + '</div>' +
+                '<div class="col-md-6">' + section('Time', kv([
+                    ['Source', ts.setTimeMode === '2' ? 'SNTP' : 'manual clock'],
+                    ['SNTP server', esc($.map(servers, function (s) { return s.IPAddress; }).join(', ')) || '<span class="text-muted">none</span>'],
+                    ['Time zone', esc((tz.timeZoneID || '') + ' (UTC' + off + ')')],
+                    ['Daylight saving', esc({off: 'off', eu: 'European rule', us: 'US rule', custom: 'custom rule'}[dst])]
+                ]) + '<button class="btn btn-default btn-sm" data-task="time">' + icon('pencil') + ' Edit</button>') + '</div></div>' +
+                '<div class="row"><div class="col-md-6">' + section('Remote syslog', kv([
+                    ['Server', sys_srv.length ? esc(sys_srv[0].IPAddr + ':' + sys_srv[0].portNo) : '<span class="text-muted">none</span>'],
+                    ['Level', sys_srv.length ? esc(sys_srv[0].severity) : '']
+                ]) + '<button class="btn btn-default btn-sm" data-task="syslog">' + icon('pencil') + ' Edit</button>') + '</div>' +
+                '<div class="col-md-6">' + section('Switch', '<p class="small text-muted">Save the running configuration, make the ' +
+                    'switch easy to find in the rack, or restart it.</p>' +
+                    '<button class="btn btn-default btn-sm" data-task="save">' + icon('floppy-o') + ' Save configuration</button> ' +
+                    '<button class="btn btn-default btn-sm" data-task="locate-on">' + icon('lightbulb-o') + ' Blink locator LED</button> ' +
+                    '<button class="btn btn-default btn-sm" data-task="locate-off">Stop LED</button> ' +
+                    '<button class="btn btn-danger btn-sm" data-task="reboot">' + icon('power-off') + ' Restart switch</button>') + '</div></div>';
+            var $html = $(html);
+            $html.find('[data-task]').on('click', function () {
+                var task = $(this).data('task');
+                var $n = page.$banner;
+                var done = function (r) { changeResult($n, r); };
+                if (task === 'system') {
+                    dialog({title: 'System', fields: [
+                        {name: 'name', label: 'Name', value: sys.systemName, help: 'Letters, digits and hyphens, up to 58 characters.'},
+                        {name: 'location', label: 'Location', value: sys.systemLocation},
+                        {name: 'contact', label: 'Contact', value: sys.systemContact}],
+                        submit: function (v) { return applyChange('system', v).done(done).always(after('system')); }});
+                } else if (task === 'time') {
+                    dialog({title: 'Time', fields: [
+                        {name: 'sntp_server', label: 'SNTP server', value: servers.length ? servers[0].IPAddress : '',
+                            placeholder: 'e.g. the firewall address on the switch network',
+                            help: 'Leave empty to use the manual clock. The firewall must answer NTP on the switch network ' +
+                                '(Services &gt; Network Time, and a rule allowing UDP 123).'},
+                        {name: 'timezone', label: 'Time zone offset', type: 'select', value: off,
+                            options: $.map(TZ_OFFSETS, function (o) { return [[o, 'UTC' + o]]; })},
+                        {name: 'timezone_name', label: 'Time zone abbreviation', value: tz.timeZoneID || 'UTC',
+                            help: '1 to 4 letters, for example CET. Shown in the switch log.'},
+                        {name: 'dst', label: 'Daylight saving', type: 'select', value: dst === 'custom' ? 'off' : dst,
+                            options: [['off', 'off'], ['eu', 'European rule (last Sunday of March to last Sunday of October)'],
+                                ['us', 'US rule (second Sunday of March to first Sunday of November)']]}],
+                        submit: function (v) { return applyChange('time', v).done(done).always(after('system')); }});
+                } else if (task === 'syslog') {
+                    dialog({title: 'Remote syslog', fields: [
+                        {name: 'enabled', label: 'Send the switch log to a syslog server', type: 'checkbox', value: !!sys_srv.length},
+                        {name: 'server', label: 'Server', value: sys_srv.length ? sys_srv[0].IPAddr : '',
+                            help: 'IPv4 address. To collect the log on this firewall, enable remote reception in ' +
+                                'System &gt; Settings &gt; Logging and allow UDP 514 from the switch.'},
+                        {name: 'port', label: 'UDP port', value: sys_srv.length ? sys_srv[0].portNo : '514'},
+                        {name: 'severity', label: 'Lowest level sent', type: 'select', value: sys_srv.length ? sys_srv[0].severity : '6',
+                            options: [['0', 'emergency'], ['1', 'alert'], ['2', 'critical'], ['3', 'error'], ['4', 'warning'],
+                                ['5', 'notice'], ['6', 'informational'], ['7', 'debug']]}],
+                        submit: function (v) { return applyChange('syslog', v).done(done).always(after('monitor')); }});
+                } else if (task === 'save') {
+                    applyChange('save', {}).done(done);
+                } else if (task === 'locate-on' || task === 'locate-off') {
+                    applyChange('locate', {on: task === 'locate-on'}).done(done);
+                } else if (task === 'reboot') {
+                    dialog({title: 'Restart the switch', ok: 'Restart',
+                        intro: 'The running configuration is saved first (if "Save after each change" is on). Every port goes ' +
+                            'down: access points, cameras and the connection to the firewall are lost for about two to five minutes.',
+                        confirm: 'I understand that the whole network behind this switch stops while it restarts.',
+                        submit: function () { return applyChange('reboot', {confirm: true}).done(done); }});
+                }
+            });
+            return $html;
+        }
+
+        function sectionBox(name, meta) {
+            var value = (data.sections || {})[name];
+            var err = (data.errors || {})[name];
+            var risk = RISK[meta.risk] || RISK.normal;
+            var head = (meta.risk !== 'normal' ? ' ' + badge(meta.risk === 'blocked' ? 'read-only' : 'caution', risk[0], risk[1]) : '') +
+                ((data.read_at || {})[name] ? ' <span class="small text-muted" title="' + esc(datetime(data.read_at[name])) + '">read ' +
+                    esc(ago(data.read_at[name])) + '</span>' : '');
+            var $box = $(section(meta.title, '', head + ' <code class="small text-muted" style="margin-left:auto">' + esc(name) + '</code>'));
+            var $body = $box.find('.instanton-section-body');
+            var editable = canChange && meta.risk !== 'blocked';
+            var confirmText = meta.risk === 'caution' ? 'I checked this change: it can interrupt traffic on the switch.' : null;
+            if (err) { $body.html('<p class="text-muted small">' + esc(err) + '</p>'); return $box; }
+            if (value === undefined) { $body.html('<p class="text-muted small">Not read yet: press <b>Read from switch</b>.</p>'); return $box; }
+            if (meta.kind === 'setting') {
+                var fields = scalarFields(value);
+                var rows = $.map(fields, function (v, k) { return [[humanize(k), esc(v)]]; });
+                $body.html(Object.keys(fields).length ? kv(rows) : '<p class="text-muted small">No values.</p>');
+                if (editable && Object.keys(fields).length) {
+                    $body.append($('<button class="btn btn-default btn-xs">' + icon('pencil') + ' Edit</button>').on('click', function () {
+                        dialog({title: meta.title, wide: true, confirm: confirmText,
+                            intro: 'Change the values and press Apply; only changed fields are sent. Read-only values ' +
+                                '(counters, status) are rejected by the switch.',
+                            fields: $.map(fields, function (v, k) { return [valueInput(k, v)]; }),
+                            submit: function (vals) {
+                                var changed = {};
+                                $.each(vals, function (k, v) { if (String(v) !== String(fields[k])) { changed[k] = v; } });
+                                if (!Object.keys(changed).length) { notice(page.$banner, 'info', 'Nothing changed.'); return null; }
+                                return applyChange('section', {section: name, op: 'set', values: changed, confirm: true})
+                                    .done(function (r) { changeResult(page.$banner, r); }).always(after(name));
+                            }});
+                    }));
+                }
+                return $box;
+            }
+            var tr = tableRows(value, meta.row);
+            if (!tr.rows.length) {
+                $body.html('<p class="text-muted small">Empty.</p>');
+            } else {
+                var cols = [];
+                $.each(tr.rows, function (_, r) { $.each(scalarFields(r), function (k) { if (cols.indexOf(k) < 0) { cols.push(k); } }); });
+                var t = new Table($('<div>').appendTo($body), {search: tr.rows.length > 10, columns: $.map(cols, function (c) {
+                    return [{label: humanize(c), key: c, render: function (r) {
+                        var v = r[c];
+                        if (c === 'interfaceName' && data.uplinks && data.uplinks.indexOf(v) >= 0) {
+                            return esc(v) + ' ' + badge('firewall', 'default', 'Leads to the firewall: protected from changes');
+                        }
+                        return esc(v);
+                    }}];
+                }).concat(editable ? [{label: '', sort: false, csv: false, render: function () {
+                    return '<button class="btn btn-default btn-xs instanton-row-edit" title="Edit">' + icon('pencil') + '</button> ' +
+                        '<button class="btn btn-default btn-xs instanton-row-del" title="Delete">' + icon('trash') + '</button>';
+                }}] : [])});
+                t.setRows(tr.rows);
+                $body.on('click', '.instanton-row-edit, .instanton-row-del', function () {
+                    var idx = $(this).closest('tr').index();
+                    var row = t.visibleRows()[idx];
+                    var fields = scalarFields(row);
+                    var keyFields = {};
+                    $.each(['interfaceName', 'interfaceType', 'VLANID', 'unitID', 'IPAddress', 'IPAddr', 'MACAddress', 'ifIndex',
+                        'sessionId', 'index', 'name', 'userName', 'groupName', 'communityName', 'viewName'], function (_, k) {
+                        if (fields[k] !== undefined) { keyFields[k] = fields[k]; }
+                    });
+                    if ($(this).hasClass('instanton-row-del')) {
+                        dialog({title: 'Delete row from ' + meta.title, ok: 'Delete',
+                            intro: 'Row: <code>' + esc($.map(keyFields, function (v, k) { return k + '=' + v; }).join(' ')) + '</code>',
+                            confirm: 'Delete this row from the switch configuration.',
+                            submit: function () {
+                                return applyChange('section', {section: name, op: 'delete', row: tr.tag, entries: [keyFields], confirm: true})
+                                    .done(function (r) { changeResult(page.$banner, r); }).always(after(name));
+                            }});
+                        return;
+                    }
+                    dialog({title: meta.title, wide: true, confirm: confirmText,
+                        intro: 'Only changed fields are sent, together with the fields that identify the row.',
+                        fields: $.map(fields, function (v, k) {
+                            var f = valueInput(k, v);
+                            if (keyFields[k] !== undefined) { f.readonly = true; f.type = 'text'; }
+                            return [f];
+                        }),
+                        submit: function (vals) {
+                            var entry = $.extend({}, keyFields);
+                            var n = 0;
+                            $.each(vals, function (k, v) { if (keyFields[k] === undefined && String(v) !== String(fields[k])) { entry[k] = v; n++; } });
+                            if (!n) { notice(page.$banner, 'info', 'Nothing changed.'); return null; }
+                            return applyChange('section', {section: name, op: 'set', row: tr.tag, entries: [entry], confirm: true})
+                                .done(function (r) { changeResult(page.$banner, r); }).always(after(name));
+                        }});
+                });
+            }
+            if (editable) {
+                var template = tr.rows.length ? scalarFields(tr.rows[0]) : {};
+                $body.append($('<button class="btn btn-default btn-xs">' + icon('plus') + ' Add row</button>').on('click', function () {
+                    var fields = $.map(template, function (v, k) { return [{name: k, label: humanize(k), value: ''}]; });
+                    if (!fields.length) {
+                        fields = [{name: 'fields', label: 'Fields', value: '', placeholder: 'name=value; name=value',
+                            help: 'The table is empty, so its field names are unknown here. Enter them as name=value pairs.'}];
+                    }
+                    dialog({title: 'Add row to ' + meta.title, wide: true, confirm: confirmText,
+                        intro: 'Leave empty the fields the switch fills in itself (counters, status).',
+                        fields: fields,
+                        submit: function (vals) {
+                            var entry = {};
+                            if (vals.fields !== undefined && fields.length === 1 && fields[0].name === 'fields') {
+                                $.each(String(vals.fields).split(';'), function (_, pair) {
+                                    var m = /^\s*([A-Za-z][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/.exec(pair);
+                                    if (m) { entry[m[1]] = m[2]; }
+                                });
+                            } else {
+                                $.each(vals, function (k, v) { if (v !== '') { entry[k] = v; } });
+                            }
+                            return applyChange('section', {section: name, op: 'add', row: tr.tag, entries: [entry], confirm: true})
+                                .done(function (r) { changeResult(page.$banner, r); }).always(after(name));
+                        }});
+                }));
+            }
+            return $box;
+        }
+
+        function draw() {
+            if (!data) { return; }
+            var tabs = '<ul class="nav nav-tabs instanton-tabs" role="tablist">' + $.map(data.groups || [], function (g) {
+                return '<li' + (g[0] === group ? ' class="active"' : '') + '><a href="#' + esc(g[0]) + '" data-group="' + esc(g[0]) + '">' +
+                    esc(g[1]) + '</a></li>';
+            }).join('') + '</ul>';
+            var tools = '<div class="instanton-config-tools"><button class="btn btn-default btn-sm instanton-read" type="button" ' +
+                'title="Read the sections of this tab from the switch">' + icon('download') + ' Read from switch</button> ' +
+                '<button class="btn btn-default btn-sm instanton-read-all" type="button" title="Read every section (about 30 seconds)">' +
+                'Read everything</button>' +
+                (canChange ? '' : ' <span class="text-muted small">' + icon('lock') + ' Changes are off: tick <b>Allow changes</b> in ' +
+                    '<a href="/ui/instanton/index/settings">Settings</a> to edit.</span>') + '</div>';
+            page.$content.html(tabs + tools + '<div class="instanton-config-body"></div>');
+            var $cb = page.$content.find('.instanton-config-body');
+            if (group === 'system') { $cb.append(commonTasks()); }
+            $.each(data.catalog || {}, function (name, meta) {
+                if (meta.group === group) { $cb.append(sectionBox(name, meta)); }
+            });
+            page.$content.find('[data-group]').on('click', function (e) {
+                e.preventDefault();
+                group = $(this).data('group');
+                history.replaceState(null, '', '#' + group);
+                var missing = $.grep(Object.keys(data.catalog), function (n) {
+                    return data.catalog[n].group === group && data.sections[n] === undefined && !(data.errors || {})[n];
+                });
+                draw();
+                if (missing.length) { read(group); }
+            });
+            page.$content.find('.instanton-read').on('click', function () { read(group); });
+            page.$content.find('.instanton-read-all').on('click', function () { read('all'); });
+        }
+
+        page.render = function (d) {
+            if (d.status !== 'ok') { page.$content.html('<p class="text-danger">' + esc(d.message || 'No data.') + '</p>'); return; }
+            data = d;
+            canChange = !!d.allow_changes;
+            var empty = !Object.keys(d.sections || {}).length;
+            draw();
+            if (empty) { read(group); }
+        };
+        page.reload();
+    }
+
     window.InstantOn = {
         esc: esc, api: api, duration: duration, ago: ago, datetime: datetime, bytes: bytes, bps: bps,
         frontPanel: frontPanel, helpPanel: helpPanel, settingsHelp: settingsHelp, showTestResult: showTestResult,
-        pages: {overview: overview, 'switch': switchPage, accesspoints: accessPointsPage, clients: clientsPage, events: eventsPage}
+        pages: {overview: overview, 'switch': switchPage, accesspoints: accessPointsPage, clients: clientsPage, events: eventsPage,
+                configuration: configurationPage}
     };
 }(window, jQuery));

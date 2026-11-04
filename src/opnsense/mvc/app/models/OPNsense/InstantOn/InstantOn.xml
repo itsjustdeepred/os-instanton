@@ -1,6 +1,6 @@
 <model>
     <mount>//OPNsense/instanton</mount>
-    <version>1.0.0</version>
+    <version>1.1.0</version>
     <description>HPE Networking Instant On monitor</description>
     <items>
         <general>
@@ -36,6 +36,10 @@
                 <ValidationMessage>Use a percentage between 10 and 100.</ValidationMessage>
                 <Required>Y</Required>
             </poe_warn_percent>
+            <allow_changes type="BooleanField">
+                <Default>0</Default>
+                <Required>Y</Required>
+            </allow_changes>
         </general>
         <switch>
             <enabled type="BooleanField">
@@ -61,6 +65,10 @@
                 <Mask>/^([0-9]+\/[0-9]+)?([ ,]+[0-9]+\/[0-9]+)*$/</Mask>
                 <ValidationMessage>Use switch port names such as 1/51, separated by commas.</ValidationMessage>
             </uplink_ports>
+            <save_after_change type="BooleanField">
+                <Default>1</Default>
+                <Required>Y</Required>
+            </save_after_change>
         </switch>
         <aps>
             <enabled type="BooleanField">

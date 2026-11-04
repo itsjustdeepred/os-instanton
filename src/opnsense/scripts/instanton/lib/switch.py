@@ -5,8 +5,9 @@ Client for the local web API of HPE Networking Instant On switches
 The switch web UI talks to an XML endpoint, ``/device/wcd?{Section}``.
 Authentication is an RSA (PKCS#1 v1.5) encrypted credential string sent to
 ``<prefix>/config/system.xml?action=login`` which returns a ``sessionID``
-cookie. Everything here is read-only: the client never issues a write
-request to the switch.
+cookie. Changes are XML documents POSTed to the same endpoint
+(``<DeviceConfiguration><Section action="set|add|delete">``), exactly as
+the web UI sends them; ``save_config`` copies running to startup config.
 
 Only the Python standard library is used so the script runs on a stock
 OPNsense installation.
@@ -111,6 +112,29 @@ def element_to_dict(elem):
     return out
 
 
+def _xml_escape(value):
+    return str(value).replace('&', '&amp;').replace('<', '&lt;').replace('>', '&gt;')
+
+
+def build_elements(payload):
+    """dict -> XML child elements (None values are skipped, lists repeat)."""
+    out = []
+    for key, value in payload.items():
+        if value is None:
+            continue
+        items = value if isinstance(value, list) else [value]
+        for item in items:
+            if isinstance(item, dict):
+                out.append('<%s>%s</%s>' % (key, build_elements(item), key))
+            else:
+                out.append('<%s>%s</%s>' % (key, _xml_escape(item), key))
+    return ''.join(out)
+
+
+def build_section(section, action, payload):
+    return '<%s action="%s">%s</%s>' % (section, action, build_elements(payload or {}), section)
+
+
 def section_entries(section):
     """Return the list of row dicts of a table section, whatever the row tag."""
     if not isinstance(section, dict):
@@ -150,6 +174,19 @@ class InstantOnSwitch:
         try:
             resp = self.opener.open(self._url(path), timeout=self.timeout)
             data = resp.read()
+        except urllib.error.HTTPError as exc:
+            raise SwitchError('HTTP %s on %s' % (exc.code, path.split('?')[0]))
+        except (urllib.error.URLError, OSError) as exc:
+            raise SwitchError('cannot reach %s: %s' % (self.host, getattr(exc, 'reason', exc)))
+        if data[:2] == b'\x1f\x8b':
+            data = gzip.decompress(data)
+        return data.decode('utf-8', 'replace')
+
+    def _post(self, path, body):
+        req = urllib.request.Request(self._url(path), data=body.encode('utf-8'), method='POST',
+                                     headers={'Content-Type': 'application/xml; charset=UTF-8'})
+        try:
+            data = self.opener.open(req, timeout=self.timeout).read()
         except urllib.error.HTTPError as exc:
             raise SwitchError('HTTP %s on %s' % (exc.code, path.split('?')[0]))
         except (urllib.error.URLError, OSError) as exc:
@@ -240,6 +277,33 @@ class InstantOnSwitch:
                 if sec.tag != 'version':
                     result[sec.tag] = element_to_dict(sec)
         return result
+
+    def apply(self, changes):
+        """Send configuration changes.
+
+        ``changes`` is a list of ``(section, action, payload)`` where payload
+        is a dict (nested dicts become nested elements, lists repeat the
+        element). Returns the switch status string; raises SwitchError when
+        the switch rejects the change.
+        """
+        body = ''.join(build_section(s, a, p) for s, a, p in changes)
+        xml = "<?xml version='1.0' encoding='utf-8'?><DeviceConfiguration>%s</DeviceConfiguration>" % body
+        query = ''.join('{%s}' % s for s in dict.fromkeys(s for s, _, _ in changes))
+        text = self._post('/device/wcd?' + query, xml)
+        try:
+            root = ET.fromstring(text.encode('utf-8'))
+        except ET.ParseError:
+            raise SwitchError('unexpected answer to a configuration change')
+        code = root.findtext('ActionStatus/statusCode') or ''
+        message = (root.findtext('ActionStatus/statusString') or '').strip()
+        if code not in ('', '0'):
+            raise SwitchError('switch rejected the change: %s' % (message or 'status %s' % code))
+        return message or 'ok'
+
+    def save_config(self):
+        """Copy the running configuration to the startup configuration."""
+        return self.apply([('FileCopy', 'set', {
+            'srcLocation': '1', 'srcFileType': '2', 'destLocation': '1', 'destFileType': '3'})])
 
     def fetch_many(self, sections, batch=4):
         out = {}

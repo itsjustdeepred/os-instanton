@@ -8,9 +8,10 @@ STATE_DIR = os.environ.get('INSTANTON_STATE_DIR', '/var/db/instanton')
 
 DEFAULTS = {
     'general': {'enabled': '0', 'interval': '60', 'history_days': '14', 'event_limit': '2000',
-                'flap_threshold': '5', 'poe_warn_percent': '80', 'clock_skew_seconds': '300'},
+                'flap_threshold': '5', 'poe_warn_percent': '80', 'clock_skew_seconds': '300',
+                'allow_changes': '0'},
     'switch': {'enabled': '1', 'host': '', 'username': '', 'password': '', 'verify_tls': '0',
-               'uplink_ports': '', 'log_entries': '200'},
+               'uplink_ports': '', 'log_entries': '200', 'save_after_change': '1'},
     'aps': {'enabled': '1', 'discover': '1', 'hosts': '', 'port': '8080'},
     'cloud': {'enabled': '0', 'username': '', 'password': '', 'site': ''},
 }

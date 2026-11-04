@@ -1,9 +1,20 @@
 <acl>
     <page-services-instanton>
         <name>Services: Instant On</name>
+        <description>View the Instant On pages and data, edit the plugin settings</description>
         <patterns>
             <pattern>ui/instanton/*</pattern>
-            <pattern>api/instanton/*</pattern>
+            <pattern>api/instanton/status/*</pattern>
+            <pattern>api/instanton/settings/*</pattern>
+            <pattern>api/instanton/service/*</pattern>
+            <pattern>api/instanton/config/read*</pattern>
         </patterns>
     </page-services-instanton>
+    <page-services-instanton-change>
+        <name>Services: Instant On: change switch</name>
+        <description>Change the configuration of the Instant On switch</description>
+        <patterns>
+            <pattern>api/instanton/config/*</pattern>
+        </patterns>
+    </page-services-instanton-change>
 </acl>

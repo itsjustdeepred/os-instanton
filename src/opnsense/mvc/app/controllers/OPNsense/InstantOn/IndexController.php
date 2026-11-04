@@ -55,6 +55,11 @@ class IndexController extends \OPNsense\Base\IndexController
         $this->view->pick('OPNsense/InstantOn/events');
     }
 
+    public function configurationAction()
+    {
+        $this->view->pick('OPNsense/InstantOn/configuration');
+    }
+
     public function settingsAction()
     {
         $this->view->settingsForm = $this->getForm('settings');

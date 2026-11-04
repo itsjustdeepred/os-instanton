@@ -22,7 +22,8 @@ def main():
     state = load_json('state.json', {})
     age = int(time.time() - state['generated']) if state.get('generated') else None
     meta = {'generated': state.get('generated'), 'age': age, 'interval': cfg.int('general', 'interval'),
-            'enabled': cfg.flag('general', 'enabled'), 'configured': cfg.loaded, 'sources': state.get('sources', {})}
+            'enabled': cfg.flag('general', 'enabled'), 'configured': cfg.loaded, 'sources': state.get('sources', {}),
+            'allow_changes': cfg.flag('general', 'allow_changes')}
     switch = dict(state.get('switch') or {})
     if what == 'summary':
         out = {'summary': state.get('summary', {}), 'insights': state.get('insights', []),

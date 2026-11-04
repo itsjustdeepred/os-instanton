@@ -7,7 +7,13 @@
         <id>instanton.general.enabled</id>
         <label>Enable monitor</label>
         <type>checkbox</type>
-        <help>Start the background monitor. It polls the enabled sources at the interval below and keeps a history of devices and events. Nothing is ever changed on the switch or the access points: the plugin only reads.</help>
+        <help>Start the background monitor. It polls the enabled sources at the interval below and keeps a history of devices and events. Polling only reads; changes are made only from the Configuration page and only when "Allow changes" is ticked.</help>
+    </field>
+    <field>
+        <id>instanton.general.allow_changes</id>
+        <label>Allow changes</label>
+        <type>checkbox</type>
+        <help>Let the plugin change the switch configuration (Switch page: port and PoE controls; Configuration page: every section). Off by default: the plugin then only reads. Sections that control access to the switch (management address and VLAN, accounts and passwords, login authentication, web service, certificates, firmware, access lists) and the port that leads to the firewall are never changed, so a mistake cannot lock the firewall out. The switch account needs administrator rights. Every change is recorded in Events and in the log.</help>
     </field>
     <field>
         <id>instanton.general.interval</id>
@@ -56,7 +62,7 @@
         <id>instanton.switch.username</id>
         <label>User name</label>
         <type>text</type>
-        <help>An account of the switch web interface. Read access is enough. A dedicated account makes the plugin sessions easy to recognise in the switch log.</help>
+        <help>An account of the switch web interface. Read access is enough for monitoring; changes need an administrator account. A dedicated account makes the plugin sessions easy to recognise in the switch log.</help>
     </field>
     <field>
         <id>instanton.switch.password</id>
@@ -76,7 +82,13 @@
         <label>Uplink ports</label>
         <type>text</type>
         <advanced>true</advanced>
-        <help>Ports that lead towards the firewall or the rest of the network, for example 1/51. Addresses learned on them are not listed as clients. Leave empty for automatic detection: the port where the firewall's own MAC address is seen, or whose description mentions OPNsense, firewall, router, gateway or uplink.</help>
+        <help>Ports that lead towards the firewall or the rest of the network, for example 1/51. Addresses learned on them are not listed as clients, and they are protected from changes (they cannot be switched off or reconfigured from the plugin). Leave empty for automatic detection: the port where the firewall's own MAC address is seen, or whose description mentions OPNsense, firewall, router, gateway or uplink.</help>
+    </field>
+    <field>
+        <id>instanton.switch.save_after_change</id>
+        <label>Save after each change</label>
+        <type>checkbox</type>
+        <help>Copy the running configuration to the startup configuration after every change, so it survives a restart of the switch. Untick to test changes first: they are lost at the next restart unless you press "Save configuration" on the Configuration page.</help>
     </field>
 
     <field>

@@ -16,6 +16,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.join(HERE, '..', 'src', 'opnsense', 'scripts', 'instanton'))
 
+from lib import actions  # noqa: E402
 from lib import ap as aplib  # noqa: E402
 from lib import collector, hostinfo  # noqa: E402
 from lib import switch as swlib  # noqa: E402
@@ -166,7 +167,8 @@ class CollectorTest(unittest.TestCase):
         self.assertFalse(any(c['port'] == '1/51' for c in state['clients']))
         titles = [i['title'] for i in state['insights']]
         self.assertIn('Switch clock is wrong', titles)
-        self.assertTrue(any(t.startswith('Time sync failing') for t in titles))
+        # the fixture access points run with a clock several hours off
+        self.assertTrue(any(t.startswith('Wrong clock on') for t in titles))
         # log is newest first
         times = [entry['time'] for entry in sw['log'] if entry['time']]
         self.assertEqual(times, sorted(times, reverse=True))
@@ -187,6 +189,37 @@ class CollectorTest(unittest.TestCase):
             events = json.load(fh)
         self.assertTrue(any('1/5' in e['message'] and 'down' in e['message'] for e in events))
 
+    def _ap_with_time(self, ts):
+        info = aplib.parse_debug_info(fixture('ap_debug_info.xml'))
+        info['time'] = time.strftime('%Y-%m-%d %H:%M:%S', time.gmtime(ts))
+        return lambda host, port=8080: dict(info)
+
+    def test_ap_ntp_error_with_good_clock_is_not_a_problem(self):
+        with mock.patch.object(collector.aplib, 'read_ap', self._ap_with_time(time.time())):
+            state = collector.run(self.cfg)
+        self.assertTrue(all(abs(a['clock_skew']) < 5 for a in state['aps']))
+        self.assertFalse(any(i['title'].startswith('Wrong clock on') for i in state['insights']))
+
+    def test_switch_time_zone_and_sntp_check(self):
+        now = time.time()
+        local = time.gmtime(now + 3600)  # switch at UTC+01:00
+        self.raw['TimeSetting']['TimeZone'] = {'offsetHour': '+01', 'offsetMinute': '00', 'timeZoneID': 'CET'}
+        self.raw['TimeSetting']['setTimeMode'] = '2'
+        self.raw['TimeSetting']['CurrentLocalTime'] = {
+            'year': str(local.tm_year), 'month': '%02d' % local.tm_mon, 'day': '%02d' % local.tm_mday,
+            'hour': '%02d' % local.tm_hour, 'minute': '%02d' % local.tm_min, 'second': '%02d' % local.tm_sec}
+        self.raw['SNTPServerTable'] = {'SNTPServerEntry': {
+            'IPAddress': '192.0.2.1', 'status': '4', 'lastResponse': '01011900 00:00:00',
+            'lastRequest': time.strftime('%m%d%Y %H:%M:%S', local)}}
+        state = collector.run(self.cfg)
+        sw = state['switch']
+        self.assertLess(abs(sw['clock_skew']), 5)
+        self.assertEqual(sw['timezone'], '+01:00')
+        self.assertIsNone(sw['sntp_list'][0]['last_response'])
+        titles = [i['title'] for i in state['insights']]
+        self.assertNotIn('Switch clock is wrong', titles)
+        self.assertIn('Time server 192.0.2.1 does not answer the switch', titles)
+
     def test_switch_failure_is_reported(self):
         def boom(cfg, persistent):
             raise swlib.SwitchError('login failed: invalid username or password')
@@ -195,6 +228,64 @@ class CollectorTest(unittest.TestCase):
         self.assertFalse(state['sources']['switch']['ok'])
         self.assertIn('invalid username', state['sources']['switch']['error'])
         self.assertFalse(state['summary']['switch_online'])
+
+
+class ActionsTest(unittest.TestCase):
+    def setUp(self):
+        self.state = {'switch': {'ports': [
+            {'name': '1/1', 'description': 'AP', 'enabled': True, 'role': 'ap',
+             'poe': {'enabled': True, 'status': 'delivering'}},
+            {'name': '1/51', 'description': 'OPNsense', 'enabled': True, 'role': 'uplink', 'poe': None},
+        ], 'sntp_list': [{'address': '192.0.2.9'}]}}
+
+    def test_build_section(self):
+        xml = swlib.build_section('Standard802_3List', 'set', {'Entry': {'interfaceName': '1/1',
+                                                                         'interfaceDescription': 'a&b', 'x': None}})
+        self.assertEqual(xml, '<Standard802_3List action="set"><Entry><interfaceName>1/1</interfaceName>'
+                              '<interfaceDescription>a&amp;b</interfaceDescription></Entry></Standard802_3List>')
+
+    def test_port_changes(self):
+        changes, summary = actions.plan('port', {'port': '1/1', 'description': 'Office AP', 'enabled': '0'},
+                                        self.state)
+        self.assertEqual(changes, [('Standard802_3List', 'set', {'Entry': {
+            'interfaceName': '1/1', 'interfaceDescription': 'Office AP', 'adminState': '2'}})])
+        self.assertIn('disabled', summary)
+
+    def test_uplink_cannot_be_disabled(self):
+        with self.assertRaises(actions.ActionError):
+            actions.plan('port', {'port': '1/51', 'enabled': False}, self.state)
+        actions.plan('port', {'port': '1/51', 'description': 'Firewall'}, self.state)
+
+    def test_rejects_bad_input(self):
+        for action, params in (('port', {'port': '1/9', 'description': 'x'}),
+                               ('port', {'port': '1/1', 'description': '<script>'}),
+                               ('port', {'port': '1/1'}),
+                               ('poe', {'port': '1/51', 'enabled': True}),
+                               ('system', {'name': 'bad name'}),
+                               ('time', {'timezone': '+1'}),
+                               ('time', {'timezone': '+01:00', 'timezone_name': 'CET1'}),
+                               ('time', {'sntp_server': 'bad host!'}),
+                               ('reboot', {})):
+            with self.assertRaises(actions.ActionError, msg='%s %s' % (action, params)):
+                actions.plan(action, params, self.state)
+
+    def test_time_change(self):
+        changes, _ = actions.plan('time', {'sntp_server': '192.0.2.1', 'timezone': '+01:00', 'dst': 'eu'},
+                                  self.state)
+        sections = [(c[0], c[1]) for c in changes]
+        self.assertEqual(sections, [('TimeSetting', 'set'), ('SNTPServerTable', 'delete'),
+                                    ('SNTPServerTable', 'set')])
+        ts = changes[0][2]
+        self.assertEqual(ts['setTimeMode'], '2')
+        self.assertEqual(ts['TimeZone'], {'offsetHour': '+01', 'offsetMinute': '00', 'timeZoneID': 'UTC'})
+        self.assertEqual(ts['DayLightSaving']['RecurrentPeriod']['endMonth'], '10')
+
+    def test_execute_saves(self):
+        client = mock.Mock()
+        res = actions.execute(client, 'poe_cycle', {'port': '1/1'}, self.state, save=True)
+        client.apply.assert_called_once()
+        client.save_config.assert_called_once()
+        self.assertTrue(res['saved'])
 
 
 if __name__ == '__main__':

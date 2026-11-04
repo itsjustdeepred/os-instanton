@@ -25,6 +25,8 @@ FIELD_MAP = {
     'Current Time': 'time',
     'NTP Status': 'ntp_status',
     'NTP Server': 'ntp_server',
+    'NTP Log': 'ntp_log',
+    'Time source': 'time_source',
     'Onboarding Status': 'onboarding',
     'Cloudconnect Status': 'cloud_status',
     'Cloudconnect Reason': 'cloud_reason',

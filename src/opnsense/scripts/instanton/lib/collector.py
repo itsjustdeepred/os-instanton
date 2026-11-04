@@ -9,6 +9,7 @@ One run polls every enabled source, correlates the results and writes:
                      AP offline, new device, reboots, ...)
 """
 
+import calendar
 import json
 import os
 import re
@@ -19,6 +20,7 @@ import tempfile
 import time
 from datetime import datetime
 
+from . import actions
 from . import ap as aplib
 from . import cloud as cloudlib
 from . import hostinfo
@@ -26,7 +28,7 @@ from . import switch as swlib
 from .config import Config, STATE_DIR, state_path
 
 SWITCH_SECTIONS = [
-    'SystemGlobalSetting', 'DiagnosticsUnitList', 'TimeSetting', 'SNTPGlobalSetting',
+    'SystemGlobalSetting', 'DiagnosticsUnitList', 'TimeSetting', 'SNTPGlobalSetting', 'SNTPServerTable',
     'Standard802_3List', 'StatisticsList', 'PoEPSEInterfaceList', 'PoEPSEUnitList',
     'ForwardingTable', 'LLDPMEDNeighborList', 'VLANList', 'VLANMembershipInterfaceList',
     'ConnectedUserList', 'UnexpectedRestart', 'InventoryEntitiesTable',
@@ -94,21 +96,60 @@ def firewall_macs():
     return macs
 
 
-def parse_switch_time(entry):
+def parse_switch_time(entry, offset=0):
+    """Switch clock (local time of the switch) -> epoch, given its UTC offset in seconds."""
     try:
-        return datetime(as_int(entry.get('year')), as_int(entry.get('month')), as_int(entry.get('day')),
-                        as_int(entry.get('hour')), as_int(entry.get('minute')),
-                        as_int(entry.get('second'))).timestamp()
+        return calendar.timegm(datetime(
+            as_int(entry.get('year')), as_int(entry.get('month')), as_int(entry.get('day')),
+            as_int(entry.get('hour')), as_int(entry.get('minute')), as_int(entry.get('second'))).timetuple()) - offset
     except (ValueError, TypeError, AttributeError):
         return None
 
 
-def parse_log_time(value):
-    """Switch log time is 'MMDDYYYY HH:MM:SS'."""
+def parse_log_time(value, offset=0):
+    """Switch log time is 'MMDDYYYY HH:MM:SS' in the switch's local time."""
     try:
-        return datetime.strptime(value.strip(), '%m%d%Y %H:%M:%S').timestamp()
+        return calendar.timegm(datetime.strptime(value.strip(), '%m%d%Y %H:%M:%S').timetuple()) - offset
     except (ValueError, AttributeError):
         return None
+
+
+def tz_offset(time_setting):
+    """Configured time zone of the switch in seconds east of UTC."""
+    tz = time_setting.get('TimeZone') or {}
+    raw = str(tz.get('offsetHour') or '0').strip()
+    sign = -1 if raw.startswith('-') else 1
+    return sign * (as_int(raw.lstrip('+-')) * 3600 + as_int(tz.get('offsetMinute')) * 60)
+
+
+def dst_rule(time_setting):
+    """Daylight saving rule: off, eu, us or custom."""
+    if time_setting.get('dayLightSavingMode') not in ('1', '2'):
+        return 'off'
+    rec = (time_setting.get('DayLightSaving') or {}).get('RecurrentPeriod') or {}
+    for name, preset in actions.DST_PRESETS.items():
+        if preset and all(as_int(rec.get(k), -1) == as_int(v) for k, v in preset.items()):
+            return name
+    return 'custom'
+
+
+def switch_utc_offset(time_setting, now):
+    """UTC offset (seconds) of the switch clock: time zone, plus one hour when
+    daylight saving is configured and that matches the clock better."""
+    offset = tz_offset(time_setting)
+    candidates = [offset]
+    if time_setting.get('dayLightSavingMode') in ('1', '2'):
+        candidates.append(offset + 3600)
+    naive = parse_switch_time(time_setting.get('CurrentLocalTime') or {}, 0)
+    if naive is None:
+        return offset
+    return min(candidates, key=lambda o: abs(naive - o - now))
+
+
+def format_offset(seconds):
+    sign = '-' if seconds < 0 else '+'
+    seconds = abs(seconds)
+    return '%s%02d:%02d' % (sign, seconds // 3600, seconds % 3600 // 60)
 
 
 def as_list(value):
@@ -181,6 +222,14 @@ def collect_switch(cfg, previous, persistent=False):
     poe_unit = (swlib.section_entries(raw.get('PoEPSEUnitList')) or [{}])[0]
     time_setting = raw.get('TimeSetting', {}) or {}
     sntp = raw.get('SNTPGlobalSetting', {}) or {}
+    utc_offset = switch_utc_offset(time_setting, time.time())
+    sntp_list = []
+    for s in swlib.section_entries(raw.get('SNTPServerTable')):
+        last_ok = parse_log_time(s.get('lastResponse', ''), utc_offset)
+        sntp_list.append({'address': s.get('IPAddress', ''), 'stratum': s.get('stratum', ''),
+                          'last_response': last_ok if last_ok and last_ok > 946684800 else None,
+                          'last_request': parse_log_time(s.get('lastRequest', ''), utc_offset),
+                          'status': s.get('status', '')})
     inventory = swlib.section_entries(raw.get('InventoryEntitiesTable'))
 
     # LLDP neighbours by port
@@ -220,7 +269,7 @@ def collect_switch(cfg, previous, persistent=False):
     for entry in swlib.section_entries(raw.get(LOG_SECTION)):
         msg = re.sub(r'\s+', ' ', entry.get('message', '')).strip()
         sev = as_int(entry.get('severityType'), 6)
-        ts = parse_log_time(entry.get('dateTime', ''))
+        ts = parse_log_time(entry.get('dateTime', ''), utc_offset)
         log_entries.append({'time': ts, 'time_raw': entry.get('dateTime', ''),
                             'severity': SEVERITY[sev] if 0 <= sev < len(SEVERITY) else str(sev),
                             'message': msg, 'seq': as_int(entry.get('logNo'))})
@@ -292,7 +341,7 @@ def collect_switch(cfg, previous, persistent=False):
         state = diag.get('fan%dStatus' % i)
         if state and state != '5':
             fans.append({'id': i, 'status': FAN.get(state, state)})
-    switch_time = parse_switch_time(time_setting.get('CurrentLocalTime') or {})
+    switch_time = parse_switch_time(time_setting.get('CurrentLocalTime') or {}, utc_offset)
     poe_nominal = as_int(poe_unit.get('nominalPower'))
     poe_used = as_int(poe_unit.get('consumptionPower'))
     model = next((i.get('PID', '').strip() for i in inventory if i.get('entityType') == '0'), '')
@@ -317,6 +366,12 @@ def collect_switch(cfg, previous, persistent=False):
         'sntp_server': sntp.get('syncServerIPAddress', ''),
         'sntp_servers': as_int(sntp.get('unicastServerCount')),
         'sntp_unicast': sntp.get('unicastUpdateEnabled') == '1',
+        'sntp_list': sntp_list,
+        'time_mode': 'sntp' if time_setting.get('setTimeMode') == '2' else 'manual',
+        'timezone': format_offset(tz_offset(time_setting)),
+        'timezone_name': ((time_setting.get('TimeZone') or {}).get('timeZoneID') or '').strip(),
+        'dst': dst_rule(time_setting),
+        'contact': sysinfo.get('systemContact', ''),
         'unexpected_restart': (raw.get('UnexpectedRestart') or {}).get('unexpectedRestartOccured') == '1',
         'poe': {'nominal_w': poe_nominal, 'used_w': poe_used,
                 'percent': round(poe_used * 100.0 / poe_nominal, 1) if poe_nominal else 0,
@@ -366,6 +421,11 @@ def collect_aps(cfg, switch, hosts):
                 info.pop('raw', None)
                 rec.update(info)
                 rec['online'] = True
+                try:  # the access point clock runs in UTC
+                    rec['clock_skew'] = int(calendar.timegm(time.strptime(info.get('time', ''), '%Y-%m-%d %H:%M:%S'))
+                                            - time.time())
+                except ValueError:
+                    rec['clock_skew'] = None
             except aplib.APError as exc:
                 rec['error'] = str(exc)
         else:
@@ -494,9 +554,16 @@ def insights(cfg, switch, aps, clients):
             add('warning', 'switch', 'Switch clock is wrong',
                 'The switch clock differs from the firewall by %s. Log timestamps are unreliable. '
                 'Configure an SNTP server (e.g. the firewall) on the switch.' % human_duration(abs(skew)))
-        if not switch.get('sntp_servers'):
+        servers = switch.get('sntp_list') or []
+        if not servers:
             add('warning', 'switch', 'No time server configured on the switch',
                 'SNTP has no unicast server. Point it to the firewall so logs and events line up.')
+        elif switch.get('time_mode') == 'sntp' and not any(s.get('last_response') for s in servers) \
+                and any(s.get('last_request') for s in servers):
+            add('warning', 'switch', 'Time server %s does not answer the switch' % ', '.join(s['address'] for s in servers),
+                'The switch sends SNTP requests but never got a reply. If the server is this firewall: in '
+                'Services > Network Time > General select the interface of the switch network under Interfaces '
+                '(or none, to listen everywhere), and allow UDP port 123 to the firewall on that interface.')
         if not switch.get('config_saved'):
             add('warning', 'switch', 'Running configuration not saved',
                 'The switch has unsaved changes that will be lost on reboot.')
@@ -545,11 +612,15 @@ def insights(cfg, switch, aps, clients):
         if not a.get('wired'):
             add('info', 'aps', '%s has no wired link on the monitored switch' % a['name'],
                 'It is meshed or connected elsewhere; its wireless clients appear behind its uplink AP.')
-    ntp_fail = [a for a in aps if a.get('online') and a.get('ntp_status', '').upper() == 'ERROR']
+    # An access point reports NTP ERROR when its single boot-time attempt failed (often before the network
+    # was up); it then takes the time from the cloud. Only a clock that is really wrong is a problem.
+    skew_limit = cfg.int('general', 'clock_skew_seconds')
+    ntp_fail = [a for a in aps if a.get('online') and a.get('ntp_status', '').upper() == 'ERROR'
+                and (a.get('clock_skew') is None or abs(a['clock_skew']) > skew_limit)]
     if ntp_fail:
         servers = sorted({a.get('ntp_server') or '?' for a in ntp_fail})
-        add('warning', 'aps', 'Time sync failing on %d access point%s' % (len(ntp_fail), 's' if len(ntp_fail) > 1 else ''),
-            '%s cannot reach NTP server %s. Make sure the NTP service (Services > Network Time) listens on '
+        add('warning', 'aps', 'Wrong clock on %d access point%s' % (len(ntp_fail), 's' if len(ntp_fail) > 1 else ''),
+            '%s could not reach NTP server %s. Make sure the NTP service (Services > Network Time) listens on '
             'that interface and the firewall rules allow UDP 123 from the access points.'
             % (', '.join(a['name'] for a in ntp_fail), ', '.join(servers)))
     firmwares = {a.get('firmware') for a in aps if a.get('firmware')}
