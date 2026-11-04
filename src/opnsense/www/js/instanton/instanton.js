@@ -168,14 +168,6 @@
             '<p>Each change is checked, sent to the switch, saved to its startup configuration (see Settings) and recorded ' +
             'under <a href="/ui/instanton/index/events">Events</a>. Editing needs <b>Allow changes</b> in ' +
             '<a href="/ui/instanton/index/settings">Settings</a> and an administrator account on the switch.</p>',
-        map: '<p>How the network hangs together, from this firewall to the switches, the access points and every device, built ' +
-            'from the MAC address tables and LLDP of the switches and, when a cloud account is set up, from the Instant On cloud.</p>' +
-            '<ul><li>Lines show the hop towards the firewall: a cable (with switch port, speed and PoE power), Wi-Fi, or a ' +
-            '<b>mesh</b> link between two access points with its signal (SNR: above 25 dB is good, below 15 dB is poor).</li>' +
-            '<li>Clients of the same kind are grouped: click a group to open it. The kind of each device is guessed from its ' +
-            'name, the cloud fingerprint, LLDP and the manufacturer of its MAC address (see the Type column on the Clients page).</li>' +
-            '<li>Switches that are not monitored but announce themselves through LLDP appear in grey; devices behind them hang below.</li>' +
-            '<li>Click a switch, access point or device to open its page.</li></ul>',
         events: '<p>Changes detected between two polls: ports going up or down, access points going offline or ' +
             'restarting, firmware changes, new devices on the network, PoE faults and polling errors, plus every ' +
             'configuration change made from the plugin (area <i>change</i>). The same events ' +
@@ -1738,171 +1730,11 @@
         page.reload();
     }
 
-    // ------------------------------------------------------------------
-    // network map
-    // ------------------------------------------------------------------
-    var MAP = {colW: 270, nodeW: 210, rowH: 44, pad: 16};
-
-    function mapPage($root) {
-        var page = new Page('map', $root);
-        page.loader = function () { return api('status/topology'); };
-        var opts = {group: true, clients: true, search: ''};
-        var expanded = {};
-        try { opts.group = window.localStorage.getItem('instanton.map.group') !== '0'; } catch (e) { /* ignore */ }
-        var nodes = [];
-        var $tools = $('<div class="form-inline instanton-filters instanton-map-tools">' +
-            '<label class="checkbox-inline"><input type="checkbox" data-o="clients" checked> clients</label> ' +
-            '<label class="checkbox-inline"><input type="checkbox" data-o="group"' + (opts.group ? ' checked' : '') + '> group clients by type</label> ' +
-            '<input type="search" class="form-control input-sm" placeholder="Find name, IP or MAC..." aria-label="Find"> ' +
-            '<span class="instanton-map-legend small text-muted">' +
-            '<span class="lk lk-wired"></span> cable <span class="lk lk-wireless"></span> Wi-Fi <span class="lk lk-mesh"></span> mesh ' +
-            '<span class="lk lk-unknown"></span> not detected <span class="lk lk-down"></span> link down</span></div>');
-        var $canvas = $('<div class="instanton-map"></div>');
-        page.$content.before($tools);
-        $tools.find('[data-o]').on('change', function () {
-            opts[$(this).data('o')] = this.checked;
-            if ($(this).data('o') === 'group') { try { window.localStorage.setItem('instanton.map.group', this.checked ? '1' : '0'); } catch (e) { /* ignore */ } }
-            draw();
-        });
-        $tools.find('input[type=search]').on('input', function () { opts.search = $(this).val().toLowerCase(); draw(); });
-
-        function children(byParent, id) {
-            var list = (byParent[id] || []).slice();
-            var infra = list.filter(function (n) { return !n.client; });
-            var clients = list.filter(function (n) { return n.client; });
-            if (!opts.clients) { clients = []; }
-            if (opts.search) {
-                clients = clients.filter(function (n) {
-                    return (n.label + ' ' + (n.sub || '') + ' ' + (n.mac || '') + ' ' + (n.type_label || '')).toLowerCase().indexOf(opts.search) >= 0;
-                });
-            }
-            clients.sort(function (a, b) {
-                return (a.type_label || '').localeCompare(b.type_label || '') || String(a.label).localeCompare(String(b.label), undefined, {numeric: true});
-            });
-            if (opts.group && !opts.search) {
-                var byType = {}, order = [];
-                $.each(clients, function (_, c) {
-                    if (!byType[c.type]) { byType[c.type] = []; order.push(c.type); }
-                    byType[c.type].push(c);
-                });
-                clients = [];
-                $.each(order, function (_, t) {
-                    var members = byType[t];
-                    var gid = id + '|' + t;
-                    if (members.length < 3 || expanded[gid]) {
-                        if (members.length >= 3) {
-                            clients.push({id: gid, group: true, open: true, icon: 'minus-square-o', label: 'hide ' + members.length + ' ' + (members[0].type_label || t).toLowerCase(),
-                                type: t, link: members[0].link, client: true});
-                        }
-                        clients = clients.concat(members);
-                    } else {
-                        var wireless = members.filter(function (m) { return m.link && m.link.kind === 'wireless'; }).length;
-                        clients.push({id: gid, group: true, icon: members[0].icon, type: t, client: true,
-                            label: members.length + ' × ' + (members[0].type_label || t),
-                            sub: wireless === members.length ? 'Wi-Fi' : (wireless ? wireless + ' on Wi-Fi' : 'cable'),
-                            link: {kind: wireless === members.length ? 'wireless' : 'wired', up: true},
-                            title: $.map(members, function (m) { return m.label; }).join('\n')});
-                    }
-                });
-            }
-            return infra.concat(clients);
-        }
-
-        function layout() {
-            var byParent = {}, root = null;
-            $.each(nodes, function (_, n) {
-                if (!n.parent) { root = n; } else { (byParent[n.parent] = byParent[n.parent] || []).push(n); }
-            });
-            var placed = [], leaf = 0, maxDepth = 0;
-            function place(n, depth) {
-                maxDepth = Math.max(maxDepth, depth);
-                var kids = children(byParent, n.id);
-                var item = {n: n, depth: depth, kids: []};
-                if (!kids.length) {
-                    item.y = leaf++;
-                } else {
-                    $.each(kids, function (_, k) { item.kids.push(place(k, depth + 1)); });
-                    item.y = (item.kids[0].y + item.kids[item.kids.length - 1].y) / 2;
-                }
-                placed.push(item);
-                return item;
-            }
-            if (root) { place(root, 0); }
-            return {items: placed, rows: Math.max(leaf, 1), depth: maxDepth};
-        }
-
-        function linkClass(l) {
-            if (!l) { return 'lk-unknown'; }
-            if (l.kind === 'wired' && l.up === false) { return 'lk-down'; }
-            return 'lk-' + (l.kind || 'unknown');
-        }
-
-        function linkText(n) {
-            var l = n.link || {};
-            if (n.client) { return ''; }
-            var parts = [l.text || ''];
-            if (l.speed) { parts.push(l.speed); }
-            if (l.poe_w) { parts.push(l.poe_w + ' W'); }
-            if (l.snr !== null && l.snr !== undefined) { parts.push(l.snr + ' dB'); }
-            return parts.filter(Boolean).join(' · ');
-        }
-
-        function draw() {
-            if (!nodes.length) { $canvas.html('<p class="text-muted">No data yet.</p>'); return; }
-            var L = layout();
-            var W = (L.depth + 1) * MAP.colW + MAP.pad * 2, H = L.rows * MAP.rowH + MAP.pad * 2;
-            var pos = function (it) { return {x: MAP.pad + it.depth * MAP.colW, y: MAP.pad + it.y * MAP.rowH + MAP.rowH / 2}; };
-            var paths = '', labels = '', boxes = '';
-            $.each(L.items, function (_, it) {
-                var p = pos(it);
-                $.each(it.kids, function (_, k) {
-                    var c = pos(k);
-                    var x1 = p.x + MAP.nodeW, x2 = c.x, mx = (x1 + x2) / 2;
-                    paths += '<path class="' + linkClass(k.n.link) + '" d="M' + x1 + ',' + p.y + ' C' + mx + ',' + p.y + ' ' + mx + ',' + c.y +
-                        ' ' + x2 + ',' + c.y + '"><title>' + esc(linkText(k.n) || (k.n.link || {}).text || '') + '</title></path>';
-                    var t = linkText(k.n);
-                    if (t) {
-                        labels += '<text x="' + (x2 - 6) + '" y="' + (c.y - 7) + '" text-anchor="end">' + esc(t) + '</text>';
-                    }
-                });
-                var n = it.n;
-                var cls = 'map-node map-' + (n.client ? 'client' : n.type) + (n.online === false ? ' map-offline' : '') +
-                    (n.group ? ' map-group' : '') + (n.unmanaged ? ' map-unmanaged' : '');
-                var tip = n.title || [n.label, n.type_label || n.type, n.sub, n.mac, (n.link || {}).text].filter(Boolean).join('\n');
-                var inner = '<span class="map-icon">' + icon(n.icon || 'circle-o') + '</span><span class="map-text"><span class="map-label">' +
-                    esc(n.label) + '</span>' + (n.sub ? '<span class="map-sub">' + esc(n.sub) + '</span>' : '') + '</span>' +
-                    (n.clients ? '<span class="badge map-count" title="Clients">' + esc(n.clients) + '</span>' : '');
-                var style = 'left:' + p.x + 'px;top:' + (p.y - 16) + 'px;width:' + MAP.nodeW + 'px';
-                if (n.group) {
-                    boxes += '<div class="' + cls + '" style="' + style + '" data-group="' + esc(n.id) + '" title="' + esc(tip) + '" role="button" tabindex="0">' + inner + '</div>';
-                } else if (n.href) {
-                    boxes += '<a class="' + cls + '" style="' + style + '" href="' + esc(n.href) + '" title="' + esc(tip) + '">' + inner + '</a>';
-                } else {
-                    boxes += '<div class="' + cls + '" style="' + style + '" title="' + esc(tip) + '">' + inner + '</div>';
-                }
-            });
-            $canvas.html('<div class="map-inner" style="width:' + W + 'px;height:' + H + 'px"><svg width="' + W + '" height="' + H + '">' +
-                '<g class="map-links">' + paths + '</g><g class="map-link-labels">' + labels + '</g></svg>' + boxes + '</div>');
-            $canvas.find('[data-group]').on('click keypress', function () {
-                var gid = $(this).data('group');
-                expanded[gid] = !expanded[gid];
-                draw();
-            });
-        }
-
-        page.render = function (data) {
-            if (!$canvas.parent().length) { page.$content.html(section('Network map', '')).find('.instanton-section-body').append($canvas); }
-            nodes = data.nodes || [];
-            draw();
-        };
-        page.reload();
-    }
-
     window.InstantOn = {
         esc: esc, api: api, duration: duration, ago: ago, datetime: datetime, bytes: bytes, bps: bps,
         frontPanel: frontPanel, helpPanel: helpPanel, settingsHelp: settingsHelp, showTestResult: showTestResult,
         cloudSites: cloudSites,
         pages: {overview: overview, 'switch': switchPage, accesspoints: accessPointsPage, clients: clientsPage, events: eventsPage,
-                configuration: configurationPage, map: mapPage}
+                configuration: configurationPage}
     };
 }(window, jQuery));

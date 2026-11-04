@@ -22,6 +22,8 @@ mkdir -p /var/db/instanton /usr/local/etc/instanton
 chmod 0750 /var/db/instanton /usr/local/etc/instanton
 
 echo ">>> reloading services"
+# pages removed in later versions
+rm -f /usr/local/opnsense/mvc/app/views/OPNsense/InstantOn/map.volt
 rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json /var/lib/php/tmp/opnsense_menu_cache.xml /var/lib/php/tmp/opnsense_acl_cache.json
 service configd restart
 configctl template reload OPNsense/InstantOn

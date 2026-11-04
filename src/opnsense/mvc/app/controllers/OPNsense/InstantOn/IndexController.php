@@ -55,11 +55,6 @@ class IndexController extends \OPNsense\Base\IndexController
         $this->view->pick('OPNsense/InstantOn/events');
     }
 
-    public function mapAction()
-    {
-        $this->view->pick('OPNsense/InstantOn/map');
-    }
-
     public function configurationAction()
     {
         $this->view->pick('OPNsense/InstantOn/configuration');

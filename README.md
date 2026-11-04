@@ -12,7 +12,7 @@ switch configuration. By default it only reads.
 | **Switch** | One tab per switch: device and health data (temperature, fans, PSU, PoE budget, clock, unsaved config, web sessions), front panel, every port with link, role, LLDP neighbour, VLANs, PoE, throughput, totals, learned MACs, errors and link flaps, VLAN table, switch log with level filter |
 | **Access Points** | Model, IP, uplink switch/port/speed/PoE, wireless clients, firmware, serial, coordinator, cloud status, clock check, last restart reason (crashes highlighted); with a cloud account also the cloud inventory (health, mesh uplink and its signal, radios) and the Wi-Fi networks (SSID, security, VLAN, bands, clients) |
 | **Clients** | Every learned device with its kind (camera, phone, printer, smart home, ...), name, IP, MAC/vendor, private-MAC detection, access point or switch and port, VLAN, first/last seen, SSID and signal (cloud); filters and CSV export |
-| **Network Map** | Tree from the firewall to switches, access points (mesh links included) and clients, with port, speed, PoE and signal on every link; clients grouped by kind |
+
 | **Events** | Port up/down, access point offline/restart/firmware/coordinator changes, new devices, PoE faults, polling failures; also sent to syslog |
 | **Configuration** | For each switch, every configuration section, grouped like the switch menus, with common tasks (name, time and time server, remote syslog, save, locator LED, restart) and a generic editor |
 | **Settings** | List of switches, list of cloud accounts with site selection, access points, polling, thresholds, change permission, with field help, service control and a connection test |
