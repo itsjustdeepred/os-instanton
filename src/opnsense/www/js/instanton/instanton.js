@@ -159,8 +159,7 @@
             '<li>Devices without an IP are usually on a VLAN the firewall does not route, use a static address, or ' +
             'have been quiet for a while.</li></ul>',
         configuration: '<p>The configuration of the switch, read from its local web interface and grouped like its menus. ' +
-            'Sections are read when a tab is opened; <b>Read from switch</b> refreshes the tab, <b>Read everything</b> ' +
-            'loads all sections (about 30 seconds).</p>' +
+            'The open tab is read from the switch when it is opened and again every minute.</p>' +
             '<ul><li>The <b>System</b> tab starts with the common tasks: name, time and time server, remote syslog, saving the ' +
             'configuration, the locator LED and restarting the switch.</li>' +
             '<li>Other sections show the values as the switch stores them. Most switches use <i>1</i> for on and <i>2</i> ' +
@@ -1675,33 +1674,39 @@
         page.loader = function () { return $.ajax({url: API + 'config/read/' + swPath() + 'cached', dataType: 'json', cache: false}); };
 
         function read(what) {
-            var $btn = page.$content.find('.instanton-read');
-            $btn.prop('disabled', true).find('i').addClass('fa-spin');
             reading = true;
             return $.ajax({url: API + 'config/read/' + swPath() + encodeURIComponent(what), type: 'POST', dataType: 'json', cache: false})
                 .done(function (d) {
                     if (d.status !== 'ok') { notice(page.$banner, 'danger', esc(d.message || 'Cannot read the switch.')); return; }
                     data = d;
-                    draw();
+                    lastRead = Date.now() / 1000;
                 }).always(function () {
                     reading = false;
                     draw();
+                    if (what !== 'all' && what !== group && data && data.catalog &&
+                        $.grep(Object.keys(data.catalog), function (n) { return data.catalog[n].group === what; }).length) {
+                        readTab();
+                    }
                 });
         }
 
-        // sections of the open tab that were never read are read on their own, once per tab
-        var autoRead = {};
+        // the open tab is read from the switch when it opens and then every minute, without reloading the page
         var reading = false;
-        function readMissing() {
-            if (!data || autoRead[group]) { return; }
-            var missing = $.grep(Object.keys(data.catalog || {}), function (n) {
-                return data.catalog[n].group === group && (data.sections || {})[n] === undefined && !(data.errors || {})[n];
-            });
-            if (missing.length) {
-                autoRead[group] = true;
-                read(group);
-                draw();
-            }
+        var lastRead = 0;
+        var CONFIG_REFRESH = 60;
+        function readTab() {
+            if (!data) { return; }
+            if (reading) { draw(); return; }  // the tab changed during a read: it is read when that one ends
+            read(group);
+            draw();
+        }
+        setInterval(function () {
+            if (document.hidden || reading || $('.instanton-modal').length || !data) { return; }
+            if (Date.now() / 1000 - lastRead >= CONFIG_REFRESH) { readTab(); } else { updateStamp(); }
+        }, 5000);
+        function updateStamp() {
+            page.$content.find('.instanton-config-stamp').html(reading ? icon('spinner fa-pulse') + ' reading from the switch...' :
+                (lastRead ? 'updated ' + esc(ago(lastRead)) + ' &middot; refreshes every minute' : ''));
         }
 
         function after(section) {
@@ -1807,7 +1812,7 @@
             var confirmText = meta.risk === 'caution' ? 'I checked this change: it can interrupt traffic on the switch.' : null;
             if (err) { $body.html('<p class="text-muted small">' + esc(err) + '</p>'); return $box; }
             if (value === undefined) { $body.html('<p class="text-muted small">' + (reading ? icon('spinner fa-pulse') +
-                ' Reading from the switch...' : 'Not read yet: press <b>Read from switch</b>.') + '</p>'); return $box; }
+                ' Reading from the switch...' : 'Not available on this switch.') + '</p>'); return $box; }
             if (meta.kind === 'setting') {
                 var fields = scalarFields(value);
                 var rows = $.map(fields, function (v, k) { return [[humanize(k), esc(v)]]; });
@@ -1920,14 +1925,12 @@
 
         function draw() {
             if (!data) { return; }
+            var scrollY = window.scrollY;
             var tabs = '<ul class="nav nav-tabs instanton-tabs" role="tablist">' + $.map(data.groups || [], function (g) {
                 return '<li' + (g[0] === group ? ' class="active"' : '') + '><a href="#tab=' + esc(g[0]) + '" data-group="' + esc(g[0]) + '">' +
                     esc(g[1]) + '</a></li>';
             }).join('') + '</ul>';
-            var tools = '<div class="instanton-config-tools"><button class="btn btn-default btn-sm instanton-read" type="button" ' +
-                'title="Read the sections of this tab from the switch">' + icon('download') + ' Read from switch</button> ' +
-                '<button class="btn btn-default btn-sm instanton-read-all" type="button" title="Read every section (about 30 seconds)">' +
-                'Read everything</button>' +
+            var tools = '<div class="instanton-config-tools"><span class="instanton-config-stamp text-muted small"></span>' +
                 (canChange ? '' : ' <span class="text-muted small">' + icon('lock') + ' Changes are off: tick <b>Allow changes</b> in ' +
                     '<a href="/ui/instanton/index/settings">Settings</a> to edit.</span>') + '</div>';
             page.$content.html(tabs + tools + '<div class="instanton-config-body"></div>');
@@ -1940,12 +1943,10 @@
                 e.preventDefault();
                 group = $(this).data('group');
                 setHashParam('tab', group);
-                draw();
-                readMissing();
+                readTab();
             });
-            page.$content.find('.instanton-read, .instanton-read-all').prop('disabled', reading);
-            page.$content.find('.instanton-read').on('click', function () { read(group); draw(); });
-            page.$content.find('.instanton-read-all').on('click', function () { read('all'); draw(); });
+            updateStamp();
+            window.scrollTo(0, scrollY);
         }
 
         page.render = function (d) {
@@ -1961,8 +1962,7 @@
             if (d.status !== 'ok') { page.$content.html('<p class="text-danger">' + esc(d.message || 'No data.') + '</p>'); return; }
             data = d;
             canChange = !!d.allow_changes;
-            draw();
-            readMissing();
+            readTab();
         };
         page.reload();
     }
