@@ -939,12 +939,18 @@
                     return where + (extra.length ? '<div class="small text-muted">' + extra.join(' &middot; ') + '</div>' : '');
                 }},
             {label: 'VLAN', key: 'vlan', sortValue: function (c) { return c.vlan === null || c.vlan === undefined ? 9999 : c.vlan; }},
-            {label: 'Signal', title: 'Signal strength (cloud source only)', sortValue: function (c) { return c.signal || -999; },
+            {label: 'Signal', title: 'Signal to noise ratio reported by the Instant On cloud (cloud source only). ' +
+                'Above 25 dB is good, 15-25 dB is fair, below 15 dB is poor.',
+                sortValue: function (c) { return c.snr !== null && c.snr !== undefined ? c.snr : (c.signal !== null && c.signal !== undefined ? c.signal + 100 : -999); },
                 render: function (c) {
+                    if (c.snr !== null && c.snr !== undefined) {
+                        var q = c.signal_quality || (c.snr >= 25 ? 'good' : (c.snr >= 15 ? 'fair' : 'poor'));
+                        return badge(c.snr + ' dB', q === 'good' ? 'success' : (q === 'fair' ? 'warning' : 'danger'));
+                    }
                     if (c.signal === null || c.signal === undefined) { return ''; }
                     var cls = c.signal >= -60 ? 'success' : (c.signal >= -70 ? 'warning' : 'danger');
                     return badge(c.signal + ' dBm', cls);
-                }, csvValue: function (c) { return c.signal; }},
+                }, csvValue: function (c) { return c.snr !== null && c.snr !== undefined ? c.snr : c.signal; }},
             {label: 'First seen', sortValue: function (c) { return c.first_seen || 0; }, text: function (c) { return datetime(c.first_seen); },
                 render: function (c) { return '<span title="' + esc(datetime(c.first_seen)) + '">' + esc(ago(c.first_seen)) + '</span>'; }},
             {label: 'Last seen', sortValue: function (c) { return c.last_seen || 0; }, text: function (c) { return datetime(c.last_seen); },

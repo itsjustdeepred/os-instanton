@@ -494,6 +494,7 @@ def build_clients(switch, aps, hosts, cloud, roles, known, now):
         cc = cloud_clients.get(e['mac'])
         if cc:
             rec.update({'ssid': cc.get('ssid'), 'signal': cc.get('signal'), 'band': cc.get('band'),
+                        'snr': cc.get('snr'), 'signal_quality': cc.get('signal_quality'),
                         'ap': cc.get('ap') or rec['ap'], 'health': cc.get('health'),
                         'hostname': rec['hostname'] or cc.get('name', '')})
         current[e['mac']] = rec
@@ -506,7 +507,8 @@ def build_clients(switch, aps, hosts, cloud, roles, known, now):
                             'hostname': h.get('hostname') or cc.get('name', ''), 'description': h.get('description', ''),
                             'lease': h.get('source', ''), 'vendor': hostinfo.vendor(mac),
                             'random_mac': hostinfo.is_random_mac(mac), 'online': True, 'ssid': cc.get('ssid'),
-                            'signal': cc.get('signal'), 'band': cc.get('band'), 'health': cc.get('health')}
+                            'signal': cc.get('signal'), 'band': cc.get('band'), 'health': cc.get('health'),
+                            'snr': cc.get('snr'), 'signal_quality': cc.get('signal_quality')}
     events = []
     for mac, rec in current.items():
         k = known.get(mac)
@@ -542,7 +544,7 @@ def build_clients(switch, aps, hosts, cloud, roles, known, now):
 # --------------------------------------------------------------------------
 # health checks
 # --------------------------------------------------------------------------
-def insights(cfg, switch, aps, clients):
+def insights(cfg, switch, aps, clients, cloud=None):
     out = []
 
     def add(level, area, title, detail):
@@ -612,6 +614,18 @@ def insights(cfg, switch, aps, clients):
         if not a.get('wired'):
             add('info', 'aps', '%s has no wired link on the monitored switch' % a['name'],
                 'It is meshed or connected elsewhere; its wireless clients appear behind its uplink AP.')
+    for d in (cloud or {}).get('devices', []):
+        weak = d.get('mesh_parent') and (d.get('mesh_quality') in ('poor', 'fair')
+                                         or (d.get('mesh_snr') is not None and d['mesh_snr'] < 20))
+        if weak:
+            add('warning', 'aps', 'Weak mesh link: %s' % d['name'],
+                '%s reaches the network wirelessly through %s with SNR %s dB on %s (%s). A cable or a closer '
+                'access point would make it faster and more reliable.' % (
+                    d['name'], d['mesh_parent'], d.get('mesh_snr'), d.get('mesh_band') or '?',
+                    d.get('mesh_quality') or 'weak signal'))
+        problems = [p for p in d.get('problems', []) if not (weak and p == 'uplinkFault')]
+        if problems and d.get('status') == 'up':
+            add('info', 'aps', 'Cloud reports a problem on %s' % d['name'], ', '.join(problems))
     # An access point reports NTP ERROR when its single boot-time attempt failed (often before the network
     # was up); it then takes the time from the cloud. Only a clock that is really wrong is a problem.
     skew_limit = cfg.int('general', 'clock_skew_seconds')
@@ -767,7 +781,7 @@ def run(cfg=None, persistent=False):
             per_ap[c['ap']] = per_ap.get(c['ap'], 0) + 1
     for a in aps:
         a['clients'] = per_ap.get(a['name'], 0)
-    state['insights'] = insights(cfg, switch, aps, clients)
+    state['insights'] = insights(cfg, switch, aps, clients, cloud)
     online = [c for c in clients if c['online']]
     state['summary'] = {
         'switch_online': bool(switch and switch.get('online')),

@@ -159,9 +159,17 @@ class InstantOnCloud:
             'sites': [{'id': s.get('id'), 'name': s.get('name')} for s in sites],
             'devices': [normalize_device(d) for d in inventory],
             'clients': [normalize_client(c) for c in clients],
+            # the API also returns the Wi-Fi passphrase (preSharedKey); it is never copied
             'networks': [{'name': pick(n, 'networkName', 'name', 'ssid'),
                           'type': pick(n, 'networkType', 'type'),
                           'enabled': n.get('isEnabled', n.get('enabled', '')),
+                          'hidden': bool(n.get('isSsidHidden')),
+                          'security': pick(n, 'security'), 'authentication': pick(n, 'authentication'),
+                          'vlan': n.get('vlanId') if n.get('useVlan') else None,
+                          'bands': [b for b, k in (('2.4 GHz', 'isAvailableOn24GHzRadioBand'),
+                                                   ('5 GHz', 'isAvailableOn5GHzRadioBand'),
+                                                   ('6 GHz', 'isAvailableOn6GHzRadioBand')) if n.get(k)],
+                          'aps': len([a for a in n.get('accessPoints') or [] if a.get('isBoundToNetwork')]),
                           'clients': pick(n, 'clientsCount', 'wirelessClientsCount', default=0)}
                          for n in networks],
             'alerts': [{'type': pick(a, 'type', 'alertType'), 'severity': pick(a, 'severity'),
@@ -182,6 +190,14 @@ def normalize_device(d):
         'mac': str(pick(d, 'macAddress')).lower(), 'ip': pick(d, 'ipAddress'),
         'firmware': pick(d, 'currentFirmwareVersion'), 'status': pick(d, 'status', 'operationalState'),
         'uptime': d.get('uptimeInSeconds'), 'up_to_date': d.get('isUpToDate'), 'radios': radios,
+        'health': pick(d, 'health'),
+        'problems': [pick(h, 'condition') for h in d.get('healthConditions') or [] if pick(h, 'condition')],
+        # wireless mesh: the AP reaches the network through another AP
+        'mesh_parent': pick(d, 'parentName') if d.get('parentId') else '',
+        'mesh_snr': d.get('parentSnrInDb') if d.get('parentId') else None,
+        'mesh_band': pick(d, 'parentRadioBand') if d.get('parentId') else '',
+        'mesh_quality': pick(d.get('uplinkSummary') or {}, 'signalQuality') if d.get('parentId') else '',
+        'locator_led': d.get('isLocatorLedActive'),
     }
 
 
@@ -194,10 +210,12 @@ def normalize_client(c):
         'ap': pick(c, 'apName', 'accessPointName', 'deviceName'),
         'band': pick(c, 'wirelessBand', 'band', 'radioBand'),
         'protocol': pick(c, 'wirelessProtocol'), 'security': pick(c, 'wirelessSecurity'),
-        'signal': c.get('signalInDbm'), 'snr': c.get('snrInDb'), 'health': c.get('healthInPercent'),
+        'signal': c.get('signalInDbm'), 'snr': c.get('snrInDb'), 'signal_quality': pick(c, 'signalQuality'),
+        'health': pick(c, 'health', 'healthInPercent'), 'network': pick(c, 'wiredNetworkName'),
+        'blocked': bool(c.get('isBlocked')),
         'down_mbps': c.get('downstreamSpeedInMegabitsPerSecond'),
         'up_mbps': c.get('upstreamSpeedInMegabitsPerSecond'),
         'rx_bytes': c.get('upstreamDataTransferredInBytes'),
         'tx_bytes': c.get('downstreamDataTransferredInBytes'),
-        'connected_s': c.get('connectionDurationInSeconds'),
+        'connected_s': c.get('connectionDurationInSeconds', c.get('stateDurationInSeconds')),
     }
