@@ -25,5 +25,5 @@ rm -rf /var/db/instanton /usr/local/etc/instanton /etc/rc.conf.d/instanton /var/
 rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json /var/lib/php/tmp/opnsense_menu_cache.xml /var/lib/php/tmp/opnsense_acl_cache.json
 service configd restart
 configctl template reload OPNsense/Syslog
-/usr/local/sbin/pluginctl -s syslog restart >/dev/null 2>&1 || true
+configctl syslog restart >/dev/null || /usr/local/sbin/pluginctl -s syslog restart >/dev/null 2>&1 || true
 echo ">>> removed"
