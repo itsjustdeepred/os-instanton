@@ -1,0 +1,14 @@
+mkdir -p /var/db/instanton /usr/local/etc/instanton
+chmod 0750 /var/db/instanton /usr/local/etc/instanton
+rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json /var/lib/php/tmp/opnsense_menu_cache.xml /var/lib/php/tmp/opnsense_acl_cache.json
+if [ -x /usr/local/opnsense/scripts/firmware/register.php ]; then
+	/usr/local/opnsense/scripts/firmware/register.php install os-instanton >/dev/null 2>&1 || true
+fi
+service configd restart >/dev/null 2>&1 || true
+configctl template reload OPNsense/InstantOn >/dev/null 2>&1 || true
+configctl template reload OPNsense/Syslog >/dev/null 2>&1 || true
+configctl syslog restart >/dev/null 2>&1 || true
+# a running monitor picks up the new code
+if service instanton status >/dev/null 2>&1; then
+	service instanton restart >/dev/null 2>&1 || true
+fi

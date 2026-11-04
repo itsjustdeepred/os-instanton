@@ -1,121 +1,138 @@
-# os-instanton
+<p align="center"><img src="docs/icon.svg" width="96" alt=""></p>
 
-OPNsense plugin that monitors HPE Networking (Aruba) Instant On switches and
-access points from the firewall web interface and, when allowed, manages the
-switch configuration. By default it only reads.
+<h1 align="center">os-instanton</h1>
 
-## What it shows
+<p align="center">Monitor and manage HPE Networking Instant On switches, access points and Wi-Fi networks from OPNsense.</p>
+
+<p align="center"><img src="docs/screenshots/overview.jpg" alt="Instant On overview" width="900"></p>
+
+## Overview
+
+os-instanton brings an Instant On network into the OPNsense web interface
+(**Services > Instant On**): the switches in local management mode, the
+access points, the clients behind them and, optionally, the Instant On
+cloud account. It correlates what the switch learns with the firewall's
+ARP table and DHCP leases, so every port and every client has a name.
+
+By default it only reads. Changes are enabled in Settings and are guarded
+so that the link between the firewall and the switches cannot be cut by
+mistake.
+
+## Features
 
 | Page | Content |
 |---|---|
-| **Overview** | Status cards, health checks, recent events, a front panel per switch, access point list |
-| **Switch** | One tab per switch: device and health data (temperature, fans, PSU, PoE budget, clock, unsaved config, web sessions), front panel, every port with link, role, LLDP neighbour, VLANs, PoE, throughput, totals, learned MACs, errors and link flaps, VLAN table, switch log with level filter |
-| **Access Points** | Model, IP, uplink switch/port/speed/PoE, wireless clients, firmware, serial, coordinator, cloud status, clock check, last restart reason (crashes highlighted); with a cloud account also the cloud inventory (health, mesh uplink and its signal, radios) and the Wi-Fi networks (SSID, security, VLAN, bands, clients) |
-| **Clients** | Every learned device with its kind (camera, phone, printer, smart home, ...), name, IP, MAC/vendor, private-MAC detection, access point or switch and port, VLAN, first/last seen, SSID and signal (cloud); filters and CSV export |
+| **Overview** | Status cards, health checks, recent events, front panel of each switch, access points |
+| **Switch** | Device and health data (temperature, fans, PSU, PoE budget, clock, unsaved configuration), clickable front panel, every port with link, neighbour, VLANs, PoE, throughput, errors and flaps, VLAN table, switch log |
+| **Access Points** | Model, uplink port and PoE, clients, firmware, coordinator, restart reasons; with a cloud account also radios, mesh links and the Wi-Fi networks |
+| **Clients** | Every device with kind, name, IP, MAC and manufacturer, access point or switch port, VLAN, signal, first and last seen; filters and CSV export |
+| **Events** | Port, access point, client and PoE events, also sent to syslog |
+| **Configuration** | Every configuration section of the switch, grouped like its menus, with the common tasks (name, time, syslog, save, locator LED, restart) |
+| **Dashboard widget** | Switches, access points, clients, PoE and open problems |
 
-| **Events** | Port up/down, access point offline/restart/firmware/coordinator changes, new devices, PoE faults, polling failures; also sent to syslog |
-| **Configuration** | For each switch, every configuration section, grouped like the switch menus, with common tasks (name, time and time server, remote syslog, save, locator LED, restart) and a generic editor |
-| **Settings** | List of switches, list of cloud accounts with site selection, access points, polling, thresholds, change permission, with field help, service control and a connection test |
-| **Dashboard widget** | Switch, access points, clients, PoE and open problems |
+### Management (optional)
+
+* **Ports**: description, enable, speed and duplex, PoE, PoE power cycle,
+  cable test, untagged and tagged VLANs.
+* **VLANs**: create, rename, delete.
+* **Wi-Fi networks** (cloud account): create, edit and delete, including
+  security, VLAN or NAT addressing, bands, access points, schedule,
+  bandwidth limits and access restrictions.
+* **Switch configuration**: system, time and time servers, remote syslog,
+  and a generic editor for the sections the switch interface can change.
+
+Safeguards: ports towards the firewall and between monitored switches,
+the management VLAN and VLAN 1 are protected; sections that control access
+to the switch (management address, accounts, certificates, firmware, ...)
+are read-only; changes that can interrupt traffic ask for confirmation.
+Every change is validated first and recorded in Events and syslog.
 
 ### Health checks
 
-Wrong switch clock or missing SNTP server, unsaved switch configuration,
-unexpected restart, temperature/fan/PSU alarms, PoE budget usage, ports
-that keep going down (switch-wide outages are ignored), packet errors,
-half duplex, access points linked below 1 Gb/s, PoE faults, unreachable
-access points, wrong clock on access points, SNTP server not answering the
-switch, firmware crashes, meshed access points, mixed firmware, devices
-without IP or name.
+Wrong switch clock or unanswered time server, unsaved configuration,
+unexpected restarts, temperature, fan and PSU alarms, PoE budget, unstable
+ports, packet errors, half duplex, slow access point uplinks, PoE faults,
+unreachable access points, firmware crashes, weak mesh links, mixed
+firmware and devices without address or name.
 
-## Changing the switch
+## Screenshots
 
-Off until **Allow changes** is ticked in Settings (the switch account then
-needs administrator rights). Changes are sent the way the switch web
-interface sends them (`<Section action="set|add|delete">` documents POSTed
-to `/device/wcd`), then saved to the startup configuration unless
-**Save after each change** is off.
+| | |
+|---|---|
+| ![Switch](docs/screenshots/switch.jpg) | ![Access points](docs/screenshots/accesspoints.jpg) |
+| ![Clients](docs/screenshots/clients.jpg) | ![Configuration](docs/screenshots/configuration.jpg) |
 
-* **Switch page**: per port description, enable/disable, PoE on/off, PoE
-  power cycle, cable test.
-* **Configuration page**: system name/location/contact, SNTP server, time
-  zone and daylight saving, remote syslog, save, locator LED, restart; and a
-  generic editor for the 148 sections the switch interface can change.
+## Requirements
 
-Protection against locking the firewall out:
+* Instant On 1930 or 1960 switches in **local management** mode, with an
+  account of their web interface (administrator rights to make changes).
+* Instant On access points reachable from the firewall (their local
+  diagnostic page on port 8080).
+* Optional: an Instant On cloud account without two-factor
+  authentication, for wireless client details, alerts and Wi-Fi network
+  management. The cloud API is not documented by HPE; it is used the same
+  way the Instant On portal uses it.
 
-| Level | Sections | Behaviour |
-|---|---|---|
-| normal | logging, LLDP, SNMP, multicast, PoE, time, ... | applied directly |
-| caution | ports, VLANs, spanning tree, LAG, QoS, DHCP snooping, ARP inspection, 802.1X, storm control, relays, ... | explicit confirmation required |
-| blocked | management address and VLAN, IP interfaces and routes, accounts and passwords, login authentication, RADIUS, web service, certificates, firmware images, access lists and policies | read-only |
+Works with any number of switches and cloud accounts (and sites).
 
-In every section, rows of the port that leads to the firewall are refused,
-and the management VLAN cannot be deleted. Every change is validated before
-the switch is contacted and recorded in Events and syslog (area `change`).
+## Privacy
 
-Access points take their configuration from the Instant On cloud and have
-no local configuration interface; they can be power-cycled through their
-PoE port.
-
-## Several switches and cloud accounts
-
-Any number of switches and Instant On cloud accounts can be added in
-Settings. Each switch has its own credentials, uplink ports and save option;
-each cloud account reads all of its sites or the ones ticked in the site
-list. Links between monitored switches are found from LLDP and from the
-switch MAC addresses in the forwarding tables. A device is placed on the
-edge port where it is learned, not on the links between switches. Links
-towards the firewall and between monitored switches are protected from
-changes like the uplink of a single switch.
-
-## Device kind
-
-Each client gets a kind (`type`) guessed from, in order: its name
-(firewall static mapping, DHCP host name, port description, cloud name),
-the cloud fingerprint, LLDP capabilities, and the manufacturer of the MAC
-address. The source of the guess is shown in the tooltip of the Type column.
-
-## Data sources
-
-* **Switch (local management)** – Instant On 1930/1960 web API
-  (`/device/wcd?{Section}`), RSA-encrypted login like the web UI. The
-  monitor keeps one session open between polls: every login and logout
-  writes two lines into the switch's small in-memory log, and polling with a
-  new session each minute would push the real events out of it.
-* **Access points** – unauthenticated diagnostic page
-  `http://<ap>:8080/swarm.cgi?opcode=smb_debug_info`, discovered through
-  the switch LLDP neighbours or listed by address.
-* **Firewall** – ARP table, ISC/Kea/Dnsmasq leases and static mappings
-  give IP addresses and names to the MAC addresses learned by the switch.
-  Wired ports with a single device and a description name that device.
-* **Cloud (optional, experimental)** – the undocumented Instant On portal
-  API (OAuth2 + PKCE, `x-ion-api-version: 7`) for SSIDs, signal, band and
-  health of wireless clients, radios and alerts. Accounts with two-factor
-  authentication are not supported. Tested read-only against a live account
-  with one site. The API also returns Wi-Fi passphrases; the plugin never
-  stores them.
-
-Wireless client details (SSID, signal, band) are not available locally on
-Instant On access points; without the cloud source a client is "wireless"
-when the switch learned it on an access point port.
+* No telemetry, analytics or tracking of any kind.
+* Switches and access points are reached on the local network only.
+* The only connections outside the local network go to the HPE Instant On
+  cloud (`portal.arubainstanton.com`, `nb.portal.arubainstanton.com`,
+  `sso.arubainstanton.com`), and only when a cloud account is configured.
+* Credentials are stored in the firewall configuration and in a generated
+  file readable by root only. Wi-Fi passphrases returned by the cloud are
+  never stored or sent to the browser.
 
 ## Installation
 
-The plugin follows the `opnsense/plugins` layout (`Makefile`, `pkg-descr`,
-`src/`) and can be built as a package from that tree. For a quick install
-on a running firewall, copy this repository to it and run as root:
+### From the package repository
 
 ```sh
-sh install.sh
+fetch -o /usr/local/etc/pkg/repos/instanton.conf \
+    https://raw.githubusercontent.com/itsjustdeepred/os-instanton/main/packaging/instanton.conf
+pkg update -r instanton
+pkg install os-instanton
 ```
 
-Then open **Services > Instant On > Settings**, add the switches (address
-and an account of their web interface) and optionally the cloud accounts, press **Test connection**, tick
-**Enable monitor** and press **Apply**. `uninstall.sh` removes the files
-and the collected data (settings stay in `config.xml`).
+The plugin then also appears in **System > Firmware > Plugins** and is
+updated with the firewall. Packages are built for FreeBSD 14 and 15
+(OPNsense community and business releases).
 
-## Files and services
+### From source
+
+```sh
+git clone https://github.com/itsjustdeepred/os-instanton.git
+cd os-instanton && sh install.sh   # as root; sh uninstall.sh removes it
+```
+
+Then open **Services > Instant On > Settings**, add the switches and
+optionally the cloud accounts, press **Test connection**, tick **Enable
+monitor** and **Apply**.
+
+### Network Map
+
+[os-netmap](https://github.com/itsjustdeepred/os-netmap) uses this plugin,
+when installed, to show the physical topology and how each device is
+connected.
+
+## Technical reference
+
+### Data sources
+
+* **Switch** – the web API of the switch (`/device/wcd?{Section}`), with
+  the same RSA-encrypted login as its web interface. One session is kept
+  open between polls so the switch log is not flooded with logins.
+* **Access points** – the local diagnostic page
+  `http://<ap>:8080/swarm.cgi?opcode=smb_debug_info`, found through the
+  LLDP neighbours of the switch or listed by address.
+* **Firewall** – ARP table, ISC, Kea and Dnsmasq leases and static
+  mappings name the MAC addresses learned by the switch.
+* **Cloud** – the Instant On portal API (OAuth2 with PKCE).
+
+### Files and services
 
 | Path | Purpose |
 |---|---|
@@ -130,7 +147,8 @@ and the collected data (settings stay in `config.xml`).
 configd actions: `instanton start|stop|restart|status|refresh|test`,
 `instanton view <summary|switch|ports|aps|clients|events|log|insights|topology|all>[:<switch id>]`,
 `instanton readconfig [<switch id>:]<group|Section|all|cached>`,
-`instanton configure <base64url JSON request>`, `instanton cloudsites <account id>`.
+`instanton configure <base64url JSON request>`, `instanton cloudsites <account id>`,
+`instanton cloudnet <base64url JSON request>`.
 
 API:
 
@@ -144,17 +162,32 @@ POST /api/instanton/service/cloudsites/<account id>
 GET  /api/instanton/service/status
 GET  /api/instanton/config/read/<switch id>/cached   POST /api/instanton/config/read/<switch id>/{group|Section|all}
 POST /api/instanton/config/apply         request={"switch": <id>, "action": ..., "params": {...}}
+GET  /api/instanton/cloud/networks/<account id>/<site id>
+POST /api/instanton/cloud/save/<account id>/<site id>     id=<network id or empty>, network=<JSON>
+POST /api/instanton/cloud/delete/<account id>/<site id>/<network id>
 ```
 
-Actions: `port`, `poe`, `poe_cycle`, `system`, `time`, `syslog`, `locate`,
+Actions: `port`, `vlans` (port membership), `vlan` (create, rename,
+delete), `poe`, `poe_cycle`, `system`, `time`, `syslog`, `locate`,
 `cable_test`, `reboot`, `save`, `section` (generic: `section`, `op`
 set/add/delete/deleteAll, `values` or `entries`, `confirm`). The ACL
-*Services: Instant On: change switch* grants `config/apply`; the base ACL
-only reads.
+*Services: Instant On: change switch* grants `config/apply` and the cloud
+changes; the base ACL only reads.
 
 `refresh` asks the running monitor to poll at once (SIGUSR1), or runs one
 poll when the monitor is stopped. It also appears in the cron job action
 list for scheduled polls without the background service.
+
+## Tested with
+
+* OPNsense 26.10 (FreeBSD 15.1)
+* Instant On 1960 48G 2XT 2XF switch (JL809A), firmware 3.4.0.0
+* Instant On AP22 and AP25 access points, firmware 3.4.2.0
+* Instant On cloud account with one site
+
+Other models and firmware versions should work but have not been tested
+yet. Feedback, suggestions and pull requests are welcome, especially
+reports from other switch and access point models.
 
 ## Development
 
@@ -166,9 +199,15 @@ INSTANTON_CONFIG=./instanton.conf INSTANTON_STATE_DIR=./state INSTANTON_DEBUG=1 
 python3 -m unittest discover -s tests
 ```
 
-The tests use anonymized data captured from a 1960 switch and an AP25 and
-do not touch the network.
+The tests use anonymized data and do not touch the network. Packages are
+built by `packaging/build.sh` on FreeBSD and published by the GitHub
+workflow on every `v*` tag.
+
+## Disclaimer
+
+HPE, Aruba and Instant On are trademarks of Hewlett Packard Enterprise.
+This project is independent and not affiliated with or endorsed by HPE.
 
 ## License
 
-BSD 2-Clause, see `LICENSE`.
+BSD 2-Clause, the license used by OPNsense. See [LICENSE](LICENSE).
