@@ -29,6 +29,6 @@ service configd restart
 configctl template reload OPNsense/InstantOn
 configctl template reload OPNsense/Syslog
 # regenerate the syslog-ng configuration so the plugin gets its own log file
-configctl syslog restart >/dev/null || configctl syslog restart >/dev/null || /usr/local/sbin/pluginctl -s syslog restart >/dev/null 2>&1 || true
+configctl syslog restart >/dev/null || /usr/local/sbin/pluginctl -s syslog restart >/dev/null 2>&1 || true
 
 echo ">>> done: open Services > Instant On > Settings"
