@@ -46,7 +46,9 @@ class ServiceController extends ApiMutableServiceControllerBase
         if (!$this->request->isPost()) {
             return ['status' => 'error', 'message' => 'POST required'];
         }
-        $this->sessionClose();
+        if (method_exists($this, 'sessionClose')) {
+            $this->sessionClose();
+        }
         $response = trim((new Backend())->configdRun('instanton refresh'));
         return json_decode($response, true) ?? ['status' => 'error', 'message' => $response];
     }
@@ -59,7 +61,9 @@ class ServiceController extends ApiMutableServiceControllerBase
         if (!$this->request->isPost()) {
             return ['status' => 'error', 'message' => 'POST required'];
         }
-        $this->sessionClose();
+        if (method_exists($this, 'sessionClose')) {
+            $this->sessionClose();
+        }
         $backend = new Backend();
         $backend->configdRun('template reload OPNsense/InstantOn');
         $response = trim($backend->configdRun('instanton test'));
@@ -79,7 +83,9 @@ class ServiceController extends ApiMutableServiceControllerBase
         if (!preg_match('/^[A-Za-z0-9-]{1,64}$/', $uuid)) {
             return ['status' => 'error', 'message' => 'invalid account'];
         }
-        $this->sessionClose();
+        if (method_exists($this, 'sessionClose')) {
+            $this->sessionClose();
+        }
         $backend = new Backend();
         $backend->configdRun('template reload OPNsense/InstantOn');
         $response = trim($backend->configdpRun('instanton cloudsites', [$uuid]));

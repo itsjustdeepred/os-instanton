@@ -58,7 +58,9 @@ class ConfigController extends ApiControllerBase
         if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', $what) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $switch)) {
             return ['status' => 'error', 'message' => 'invalid section'];
         }
-        $this->sessionClose();
+        if (method_exists($this, 'sessionClose')) {
+            $this->sessionClose();
+        }
         return $this->decode((new Backend())->configdpRun('instanton readconfig', [$switch . ':' . $what]));
     }
 
@@ -83,7 +85,9 @@ class ConfigController extends ApiControllerBase
         if ($payload === false || strlen($payload) > 16384) {
             return ['status' => 'error', 'message' => 'request too large'];
         }
-        $this->sessionClose();
+        if (method_exists($this, 'sessionClose')) {
+            $this->sessionClose();
+        }
         $arg = rtrim(strtr(base64_encode($payload), '+/', '-_'), '=');
         return $this->decode((new Backend())->configdpRun('instanton configure', [$arg]));
     }

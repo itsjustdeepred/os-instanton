@@ -44,7 +44,9 @@ class StatusController extends ApiControllerBase
             }
             $name .= ':' . $switch;
         }
-        $this->sessionClose();
+        if (method_exists($this, 'sessionClose')) {
+            $this->sessionClose();
+        }
         $response = (new Backend())->configdpRun('instanton view', [$name]);
         $data = json_decode($response, true);
         if (!is_array($data)) {
