@@ -88,3 +88,7 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .instanton-page select.form-control, .instanton-modal select.form-control {
     height: 30px; line-height: 1.4; padding: 4px 28px 4px 8px; background-position: right 8px center; }
 .instanton-page select.form-control:not(.input-sm), .instanton-modal select.form-control:not(.input-sm) { height: 34px; }
+
+/* front panel centred in its box, with the legend under it */
+.instanton-panel { display: flex; width: fit-content; max-width: 100%; margin: 0 auto; justify-content: center; overflow-x: auto; }
+.instanton-legend { text-align: center; }

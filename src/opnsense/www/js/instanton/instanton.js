@@ -570,7 +570,8 @@
 
     function eventList(events) {
         if (!events || !events.length) {
-            return '<p class="text-muted">No events recorded yet. Changes appear here from the second poll on.</p>';
+            return '<p class="text-muted">Nothing has changed recently. Events appear here when something happens: a port going down, ' +
+                'an access point restarting, a new device, a polling error.</p>';
         }
         return '<table class="table table-condensed"><tbody>' + $.map(events, function (e) {
             return '<tr><td class="text-nowrap text-muted" title="' + esc(datetime(e.time)) + '">' + esc(ago(e.time)) +
@@ -1143,7 +1144,8 @@
                     '<div id="instanton-events"></div>'));
                 var rank = {error: 0, warning: 1, info: 2};
                 table = new Table($('#instanton-events'), {sortKey: 0, sortDir: -1, emptyText:
-                    'No events yet. Changes are recorded from the second poll on.', columns: [
+                    'Nothing has changed yet. Every change is listed here: ports going up or down, access points going offline or ' +
+                    'restarting, firmware updates, new devices, PoE faults, polling errors and the changes made from this plugin.', columns: [
                     {label: 'Time', sortValue: function (e) { return e.time; }, text: function (e) { return datetime(e.time); },
                         render: function (e) { return '<span class="text-nowrap">' + esc(datetime(e.time)) + '</span><div class="small text-muted">' + esc(ago(e.time)) + '</div>'; }},
                     {label: 'Level', key: 'level', render: function (e) { return levelBadge(e.level); }},
