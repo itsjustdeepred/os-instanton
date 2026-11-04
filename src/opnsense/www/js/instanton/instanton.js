@@ -1158,7 +1158,8 @@
     };
 
     function humanize(name) {
-        return String(name).replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z])/g, '$1 $2')
+        return String(name).replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z]{2,})/g, '$1 $2')
+            .replace(/\bCo S\b/g, 'CoS').replace(/\bQo S\b/g, 'QoS')
             .replace(/^./, function (c) { return c.toUpperCase(); });
     }
 
@@ -1215,6 +1216,7 @@
         function commonTasks() {
             var sw = data.sections || {};
             var sys = sw.SystemGlobalSetting || {};
+            var unset = '<span class="text-muted">not set</span>';
             var ts = sw.TimeSetting || {};
             var tz = ts.TimeZone || {};
             var servers = tableRows(sw.SNTPServerTable, 'SNTPServerEntry').rows;
@@ -1227,7 +1229,8 @@
             off = (off.charAt(0) === '-' ? '-' : '+') + ('0' + off.replace(/^[+-]/, '')).slice(-2) + ':' + ('0' + (tz.offsetMinute || '0')).slice(-2);
             var html = '<div class="row">' +
                 '<div class="col-md-6">' + section('System', kv([
-                    ['Name', esc(sys.systemName)], ['Location', esc(sys.systemLocation)], ['Contact', esc(sys.systemContact)]
+                    ['Name', esc(sys.systemName) || unset], ['Location', esc(sys.systemLocation) || unset],
+                    ['Contact', esc(sys.systemContact) || unset]
                 ]) + '<button class="btn btn-default btn-sm" data-task="system">' + icon('pencil') + ' Edit</button>') + '</div>' +
                 '<div class="col-md-6">' + section('Time', kv([
                     ['Source', ts.setTimeMode === '2' ? 'SNTP' : 'manual clock'],
@@ -1344,7 +1347,12 @@
                         }
                         return esc(v);
                     }}];
-                }).concat(editable ? [{label: '', sort: false, csv: false, render: function () {
+                }).concat(editable ? [{label: '', sort: false, csv: false, render: function (r) {
+                    var mgmt = String(((data.sections || {}).ManagementInterfaceGlobalSetting || {}).managementVLAN || '1');
+                    if ((data.uplinks || []).indexOf(r.interfaceName) >= 0 ||
+                        (/^VLAN/.test(name) && String(r.VLANID) === mgmt)) {
+                        return '<span class="text-muted" title="Protected: management VLAN or port towards the firewall">' + icon('lock') + '</span>';
+                    }
                     return '<button class="btn btn-default btn-xs instanton-row-edit" title="Edit">' + icon('pencil') + '</button> ' +
                         '<button class="btn btn-default btn-xs instanton-row-del" title="Delete">' + icon('trash') + '</button>';
                 }}] : [])});
