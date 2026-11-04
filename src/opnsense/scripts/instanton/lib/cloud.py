@@ -58,9 +58,13 @@ class InstantOnCloud:
         self.opener = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
         self.noredir = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), _NoRedirect)
 
-    def _request(self, url, data=None, headers=None, opener=None):
+    def _request(self, url, data=None, headers=None, opener=None, method=None, json_body=None):
         body = urllib.parse.urlencode(data).encode() if data is not None else None
-        req = urllib.request.Request(url, data=body, headers=headers or {})
+        headers = dict(headers or {})
+        if json_body is not None:
+            body = json.dumps(json_body).encode()
+            headers['Content-Type'] = 'application/json'
+        req = urllib.request.Request(url, data=body, headers=headers, method=method)
         try:
             with (opener or self.opener).open(req, timeout=self.timeout) as resp:
                 return resp.status, dict(resp.headers), resp.read()
@@ -131,6 +135,44 @@ class InstantOnCloud:
             return json.loads(body)
         except ValueError:
             raise CloudError('API %s returned invalid JSON' % path)
+
+    def send(self, method, path, body=None):
+        """POST, PUT or DELETE on the API; returns the decoded answer (None when empty)."""
+        if not self.token or time.time() >= self.token_expires:
+            self.login()
+        for attempt in (1, 2):
+            headers = {'Authorization': 'Bearer ' + self.token, 'x-ion-api-version': API_VERSION,
+                       'Accept': 'application/json'}
+            status, _, answer = self._request(API_URL + path, headers=headers, method=method, json_body=body)
+            if status == 401 and attempt == 1:
+                self.login()
+                continue
+            break
+        if status not in (200, 201, 204):
+            detail = ''
+            try:
+                data = json.loads(answer)
+                detail = data.get('message') or data.get('detail') or json.dumps(data.get('errors') or data)[:300]
+            except (ValueError, AttributeError):
+                detail = answer[:200].decode('utf-8', 'replace') if answer else ''
+            raise CloudError('the cloud refused the change (HTTP %s)%s' % (status, ': ' + detail if detail else ''))
+        try:
+            return json.loads(answer) if answer else None
+        except ValueError:
+            return None
+
+    # Wi-Fi networks of a site (observed in the portal: networksSummary, POST / PUT / DELETE)
+    def networks(self, site_id):
+        return (self.get('/sites/%s/networksSummary' % site_id) or {}).get('elements', [])
+
+    def create_network(self, site_id, data):
+        return self.send('POST', '/sites/%s/networksSummary' % site_id, data)
+
+    def update_network(self, site_id, network_id, data):
+        return self.send('PUT', '/sites/%s/networksSummary/%s' % (site_id, network_id), data)
+
+    def delete_network(self, site_id, network_id):
+        return self.send('DELETE', '/sites/%s/networksSummary/%s' % (site_id, network_id))
 
     def sites(self):
         return (self.get('/sites/') or {}).get('elements', [])

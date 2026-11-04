@@ -884,6 +884,10 @@ def run(cfg=None, persistent=False):
             data = cloudlib.InstantOnCloud(acc.get('username'), acc.get('password')).collect(acc.list('sites'))
             for item in data['sites']:
                 item['account'] = acc.label
+                item['account_id'] = acc.id
+            for k in ('networks', 'devices'):
+                for item in data[k]:
+                    item['account_id'] = acc.id
             state['sources'][key] = {'enabled': True, 'ok': True, 'label': acc.label, 'kind': 'cloud',
                                      'sites': [x.get('name') for x in data['sites']]}
             if cloud is None:

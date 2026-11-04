@@ -452,3 +452,47 @@ class ActionsTest(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class CloudNetworkTest(unittest.TestCase):
+    def setUp(self):
+        sys.path.insert(0, os.path.join(HERE, '..', 'src', 'opnsense', 'scripts', 'instanton'))
+        import cloudnet
+        self.cn = cloudnet
+        self.existing = {
+            'id': 'n1', 'networkName': 'Casa', 'isEnabled': True, 'preSharedKey': 'secret-pass', 'useVlan': True,
+            'vlanId': 30, 'security': 'wpa3', 'type': 'employee', 'health': 'good', 'wirelessClientsCount': 5,
+            'qos': {'isBandwidthLimitEnabled': False, 'downloadBandwidthLimitInMbps': 1000},
+            'accessPoints': [{'deviceId': 'AA:BB:CC:00:00:01', 'deviceName': 'AP1', 'isBoundToNetwork': True},
+                             {'deviceId': 'aa:bb:cc:00:00:02', 'deviceName': 'AP2', 'isBoundToNetwork': True}]}
+
+    def test_validation(self):
+        with self.assertRaisesRegex(self.cn.RequestError, '8 to 63'):
+            self.cn.clean({'preSharedKey': 'short'})
+        with self.assertRaisesRegex(self.cn.RequestError, '1 to 32'):
+            self.cn.clean({'networkName': ''})
+        with self.assertRaisesRegex(self.cn.RequestError, '4094'):
+            self.cn.clean({'vlanId': 5000})
+        self.assertEqual(self.cn.clean({'preSharedKey': ''}), {})  # empty keeps the current password
+
+    def test_update_keeps_password_and_binds_aps(self):
+        changes = self.cn.clean({'isEnabled': False, 'boundAccessPoints': ['aa:bb:cc:00:00:01'],
+                                 'qos': {'isBandwidthLimitEnabled': True, 'downloadBandwidthLimitInMbps': 25}})
+        body = {k: v for k, v in self.existing.items() if k not in self.cn.READ_ONLY}
+        net = self.cn.apply_changes(body, changes)
+        self.assertEqual(net['preSharedKey'], 'secret-pass')
+        self.assertFalse(net['isEnabled'])
+        self.assertEqual([ap['isBoundToNetwork'] for ap in net['accessPoints']], [True, False])
+        self.assertFalse(net['isBroadcastOnAllBoundApsOnAllBands'])
+        self.assertEqual(net['perClientBandwidthLimitInMbps'], 25)
+        self.assertNotIn('health', net)
+        self.assertNotIn('preSharedKey', self.cn.public(self.existing))
+
+    def test_new_network(self):
+        net = self.cn.new_network([self.existing], self.cn.clean(
+            {'networkName': 'Test', 'preSharedKey': 'longenough', 'useVlan': True, 'vlanId': 50, 'isSsidHidden': True}))
+        self.assertEqual((net['vlanId'], net['isSsidHidden'], net['authentication']), (50, True, 'psk'))
+        self.assertEqual(len(net['accessPoints']), 2)
+        self.assertTrue(all(ap['isBoundToNetwork'] for ap in net['accessPoints']))
+        with self.assertRaisesRegex(self.cn.RequestError, 'password'):
+            self.cn.new_network([self.existing], self.cn.clean({'networkName': 'X'}))

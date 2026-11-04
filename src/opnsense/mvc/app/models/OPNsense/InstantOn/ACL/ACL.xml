@@ -8,13 +8,15 @@
             <pattern>api/instanton/settings/*</pattern>
             <pattern>api/instanton/service/*</pattern>
             <pattern>api/instanton/config/read*</pattern>
+            <pattern>api/instanton/cloud/networks*</pattern>
         </patterns>
     </page-services-instanton>
     <page-services-instanton-change>
         <name>Services: Instant On: change switch</name>
-        <description>Change the configuration of the Instant On switches</description>
+        <description>Change the configuration of the Instant On switches and the Wi-Fi networks of the Instant On sites</description>
         <patterns>
             <pattern>api/instanton/config/*</pattern>
+            <pattern>api/instanton/cloud/*</pattern>
         </patterns>
     </page-services-instanton-change>
 </acl>

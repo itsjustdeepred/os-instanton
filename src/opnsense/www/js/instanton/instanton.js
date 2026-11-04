@@ -683,6 +683,7 @@
 
     var latestPorts = [];
     var latestVlans = [];
+    var latestNets = [];
     var multiSwitch = false;
     var switchList = [];
 
@@ -970,24 +971,69 @@
             }
             if (cloudTable) { cloudTable.setRows(cd); }
             var nets = data.cloud_networks || [];
-            if (nets.length && !netTable) {
-                $('#instanton-cloud-networks').html(section('Wi-Fi networks', '<div id="instanton-net-table"></div>'));
-                netTable = new Table($('#instanton-net-table'), {search: false, sortKey: 1, columns: [
+            canChange = !!(data.meta || {}).allow_changes;
+            if ((nets.length || sites.length) && !netTable) {
+                var addBtn = canChange && sites.length ? '<button type="button" class="btn btn-success btn-xs instanton-net-add" ' +
+                    'style="margin-left:auto">' + icon('plus') + ' Add network</button>' : '';
+                $('#instanton-cloud-networks').html(section('Wi-Fi networks', '<div id="instanton-net-table"></div>' +
+                    '<p class="small text-muted">Changes go through the Instant On cloud and reach the access points within a minute.' +
+                    (canChange ? '' : ' To manage the networks here tick <b>Allow changes</b> in Settings.') + '</p>', addBtn));
+                var cols = [
                     {label: 'Site', key: 'site', cls: manySites ? '' : 'hidden'},
                     {label: 'SSID', key: 'name', render: function (n) {
                         return '<b>' + esc(n.name) + '</b>' + (n.hidden ? ' ' + badge('hidden', 'default') : '') +
                             (n.enabled === false ? ' ' + badge('off', 'default') : '');
                     }},
-                    {label: 'Type', key: 'type'},
-                    {label: 'Security', text: function (n) { return (n.security || '') + ' ' + (n.authentication || ''); },
-                        render: function (n) { return esc((n.security || '').toUpperCase()) + ' <span class="small text-muted">' + esc(n.authentication || '') + '</span>'; }},
+                    {label: 'Use', key: 'type', render: function (n) { return esc(n.type === 'guest' ? 'guests' : 'staff / home'); }},
+                    {label: 'Security', text: function (n) { return n.security || ''; },
+                        render: function (n) { return esc({wpa3: 'WPA2 + WPA3', wpa2: 'WPA2'}[n.security] || String(n.security || '').toUpperCase()); }},
                     {label: 'VLAN', key: 'vlan'},
                     {label: 'Bands', text: function (n) { return (n.bands || []).join(', '); },
                         render: function (n) { return esc((n.bands || []).join(', ')); }},
                     {label: 'Access points', key: 'aps'},
                     {label: 'Clients', key: 'clients', sortValue: function (n) { return n.clients || 0; }}
-                ]});
+                ];
+                if (canChange) {
+                    cols.push({label: '', sort: false, csv: false, render: function (n) {
+                        return n.id ? '<button type="button" class="btn btn-default btn-xs instanton-net-edit" data-id="' + esc(n.id) + '" title="Change">' +
+                            icon('pencil') + '</button> <button type="button" class="btn btn-default btn-xs instanton-net-del" data-id="' + esc(n.id) +
+                            '" title="Delete">' + icon('trash') + '</button>' : '';
+                    }});
+                }
+                netTable = new Table($('#instanton-net-table'), {search: false, sortKey: 1, columns: cols,
+                    emptyText: 'No Wi-Fi network on this site.'});
+                $('#instanton-cloud-networks').on('click', '.instanton-net-add', function () {
+                    var site = sites[0];
+                    if (sites.length > 1) {
+                        dialog({title: 'Add a Wi-Fi network', ok: 'Next', fields: [{name: 'site', label: 'Site', type: 'select', value: site.id,
+                            options: $.map(sites, function (x) { return [[x.id, x.name]]; })}],
+                            submit: function (v) { networkDialog($.grep(sites, function (x) { return x.id === v.site; })[0], null, page); return null; }});
+                    } else {
+                        networkDialog(site, null, page);
+                    }
+                });
+                $('#instanton-cloud-networks').on('click', '.instanton-net-edit, .instanton-net-del', function () {
+                    var id = $(this).data('id');
+                    var row = $.grep(latestNets, function (x) { return x.id === id; })[0];
+                    var site = row && $.grep(sites, function (x) { return x.id === row.site_id; })[0];
+                    if (!row || !site) { return; }
+                    if ($(this).hasClass('instanton-net-del')) {
+                        dialog({title: 'Delete Wi-Fi network', ok: 'Delete', danger: true,
+                            intro: 'Delete the network <b>' + esc(row.name) + '</b> from the site ' + esc(site.name) + '?',
+                            confirm: 'The ' + esc(row.clients || 0) + ' devices connected to it are disconnected, and every access point stops ' +
+                                'broadcasting it.',
+                            submit: function () {
+                                return $.ajax({url: API + 'cloud/delete/' + encodeURIComponent(site.account_id) + '/' + encodeURIComponent(site.id) + '/' +
+                                    encodeURIComponent(id), type: 'POST', dataType: 'json'}).done(function (r) {
+                                    netResult(page, r, 'Network ' + row.name + ' deleted.');
+                                });
+                            }});
+                    } else {
+                        networkDialog(site, row, page);
+                    }
+                });
             }
+            latestNets = nets;
             if (netTable) { netTable.setRows(nets); }
         };
         page.reload();
@@ -1398,6 +1444,109 @@
         // the VLAN confirmation appears only once the VLANs are changed
         $dlg.on('change', '.instanton-vlan-tag, [data-name=untagged]', function () {
             $dlg.find('.instanton-vlan-ok-box').show();
+        });
+    }
+
+    // ---- Wi-Fi networks (Instant On cloud) ------------------------------
+    function netResult(page, r, okText) {
+        if (r && r.status === 'ok') {
+            notice(page.$banner, 'success', icon('check-circle') + ' ' + esc(okText) + ' The access points apply it within a minute.');
+            api('service/refresh', 'POST').always(function () { page.reload(); });
+        } else {
+            notice(page.$banner, 'danger', icon('times-circle') + ' ' + esc((r && r.message) || 'The cloud refused the change.'));
+        }
+    }
+
+    // full editor of one network; ``row`` null creates a new one
+    function networkDialog(site, row, page) {
+        var base = API + 'cloud/';
+        var load = row ? $.ajax({url: base + 'networks/' + encodeURIComponent(site.account_id) + '/' + encodeURIComponent(site.id),
+            dataType: 'json', cache: false}) : $.Deferred().resolve({status: 'ok', networks: []}).promise();
+        load.done(function (d) {
+            if (!d || d.status !== 'ok') { notice(page.$banner, 'danger', esc((d && d.message) || 'Cannot read the networks from the cloud.')); return; }
+            var n = row ? $.grep(d.networks, function (x) { return x.id === row.id; })[0] : null;
+            if (row && !n) { notice(page.$banner, 'danger', 'The network no longer exists.'); return; }
+            n = n || {isEnabled: true, type: 'employee', security: 'wpa3', useVlan: true, isAvailableOn24GHzRadioBand: true,
+                isAvailableOn5GHzRadioBand: true, isInternetAllowed: true, isHighEfficiency11axEnabled: true, qos: {trafficPriority: 'medium',
+                bandwidthLimitMode: 'perClient', downloadBandwidthLimitInMbps: 100, uploadBandwidthLimitInMbps: 100},
+                accessPoints: ((d.networks[0] || {}).accessPoints || [])};
+            var q = n.qos || {};
+            var aps = n.accessPoints || [];
+            function chk(name, label, value, help) {
+                return '<div class="checkbox"><label><input type="checkbox" data-name="' + name + '"' + (value ? ' checked' : '') + '> ' + esc(label) +
+                    '</label>' + (help ? '<p class="help-block small">' + help + '</p>' : '') + '</div>';
+            }
+            function txt(name, label, value, help, extra, type) {
+                return '<div class="form-group"><label>' + esc(label) + '</label><input type="' + (type || 'text') + '" class="form-control" data-name="' + name +
+                    '" value="' + esc(value === null || value === undefined ? '' : value) + '"' + (extra || '') + '>' +
+                    (help ? '<p class="help-block small">' + help + '</p>' : '') + '</div>';
+            }
+            function sel(name, label, value, options, help) {
+                return '<div class="form-group"><label>' + esc(label) + '</label><select class="form-control" data-name="' + name + '">' +
+                    $.map(options, function (o) { return '<option value="' + esc(o[0]) + '"' + (String(o[0]) === String(value) ? ' selected' : '') + '>' +
+                        esc(o[1]) + '</option>'; }).join('') + '</select>' + (help ? '<p class="help-block small">' + help + '</p>' : '') + '</div>';
+            }
+            var tabs = [['general', 'General'], ['ip', 'IP & access'], ['aps', 'Access points'], ['qos', 'QoS'], ['wireless', 'Wireless']];
+            var panes = {
+                general: txt('networkName', 'Network name (SSID)', n.networkName, '1 to 32 characters.', ' maxlength="32"') +
+                    chk('isEnabled', 'Enabled', n.isEnabled !== false, 'A disabled network is kept but not broadcast.') +
+                    chk('isSsidHidden', 'Hidden network', n.isSsidHidden, 'Not shown in the Wi-Fi list; devices must type its name.') +
+                    sel('type', 'Use', n.type, [['employee', 'Staff / home'], ['guest', 'Guests (isolated)']]) +
+                    sel('security', 'Security', n.security, [['wpa3', 'WPA2 + WPA3 Personal (recommended)'], ['wpa2', 'WPA2 Personal']]) +
+                    txt('preSharedKey', 'Wi-Fi password', '', row ? 'Leave empty to keep the current password.' : '8 to 63 characters.',
+                        ' autocomplete="new-password"', 'password'),
+                ip: chk('useVlan', 'Use a VLAN', n.useVlan, 'Puts the devices of this network on a VLAN of the switches and of the firewall.') +
+                    txt('vlanId', 'VLAN', n.vlanId, 'For example 20. The VLAN must exist on the firewall and be carried by the switch ports of the access points.') +
+                    chk('isInternetAllowed', 'Internet access', n.isInternetAllowed !== false) +
+                    chk('isIntraSubnetTrafficAllowed', 'Devices of this network can talk to each other', n.isIntraSubnetTrafficAllowed) +
+                    chk('blockPrivateSubnets', 'Block the private networks (10.x, 172.16-31.x, 192.168.x)', n.blockPrivateSubnets,
+                        'Keeps these devices away from the other local networks.'),
+                aps: '<p class="small text-muted">Access points that broadcast this network.</p>' + (aps.length ? $.map(aps, function (a) {
+                    return '<div class="checkbox"><label><input type="checkbox" class="instanton-net-ap" value="' + esc(a.deviceId) + '"' +
+                        (a.isBoundToNetwork !== false ? ' checked' : '') + '> ' + esc(a.deviceName || a.deviceId) + ' <span class="text-muted small">' +
+                        esc(a.deviceModel || '') + '</span></label></div>';
+                }).join('') : '<p class="small text-muted">Every access point of the site.</p>'),
+                qos: chk('qos.isBandwidthLimitEnabled', 'Limit the bandwidth', q.isBandwidthLimitEnabled) +
+                    sel('qos.bandwidthLimitMode', 'Limit', q.bandwidthLimitMode || 'perClient', [['perClient', 'per device'], ['perNetwork', 'for the whole network']]) +
+                    txt('qos.downloadBandwidthLimitInMbps', 'Download (Mb/s)', q.downloadBandwidthLimitInMbps || 100) +
+                    txt('qos.uploadBandwidthLimitInMbps', 'Upload (Mb/s)', q.uploadBandwidthLimitInMbps || 100) +
+                    sel('qos.trafficPriority', 'Traffic priority', q.trafficPriority || 'medium', [['low', 'low'], ['medium', 'medium'], ['high', 'high']]),
+                wireless: chk('isAvailableOn24GHzRadioBand', '2.4 GHz', n.isAvailableOn24GHzRadioBand !== false, 'Longer range, needed by most smart home devices.') +
+                    chk('isAvailableOn5GHzRadioBand', '5 GHz', n.isAvailableOn5GHzRadioBand !== false) +
+                    chk('isAvailableOn6GHzRadioBand', '6 GHz', n.isAvailableOn6GHzRadioBand, 'Only on access points that support it (Wi-Fi 6E / 7).') +
+                    chk('isHighEfficiency11axEnabled', 'Wi-Fi 6 (802.11ax)', n.isHighEfficiency11axEnabled !== false) +
+                    chk('isHighEfficiency11axOfdmaEnabled', 'OFDMA', n.isHighEfficiency11axOfdmaEnabled) +
+                    chk('isLegacy80211bRatesEnabled', '802.11b rates (very old devices)', n.isLegacy80211bRatesEnabled, 'Slows the network down; only for devices that need it.') +
+                    chk('isDynamicMulticastOptimizationEnabled', 'Multicast optimisation', n.isDynamicMulticastOptimizationEnabled, 'Helps video streaming and speakers on busy networks.')
+            };
+            var html = '<ul class="nav nav-tabs instanton-net-tabs">' + $.map(tabs, function (t, i) {
+                return '<li' + (i === 0 ? ' class="active"' : '') + '><a href="#" data-net-tab="' + t[0] + '">' + esc(t[1]) + '</a></li>';
+            }).join('') + '</ul>' + $.map(tabs, function (t, i) {
+                return '<div class="instanton-net-pane" data-net-pane="' + t[0] + '"' + (i === 0 ? '' : ' style="display:none"') + '>' + panes[t[0]] + '</div>';
+            }).join('');
+            var $dlg = dialog({title: row ? 'Wi-Fi network ' + n.networkName : 'New Wi-Fi network on ' + site.name, ok: row ? 'Save' : 'Create network',
+                wide: true, extra: $(html), submit: function (v) {
+                    var net = {}, qos = {};
+                    $.each(v, function (k, val) {
+                        if (k.indexOf('qos.') === 0) { qos[k.slice(4)] = val; } else { net[k] = val; }
+                    });
+                    if (!net.preSharedKey) { delete net.preSharedKey; }
+                    net.qos = qos;
+                    var bound = $dlg.find('.instanton-net-ap');
+                    if (bound.length) { net.boundAccessPoints = bound.filter(':checked').map(function () { return this.value; }).get(); }
+                    return $.ajax({url: base + 'save/' + encodeURIComponent(site.account_id) + '/' + encodeURIComponent(site.id), type: 'POST',
+                        dataType: 'json', data: {id: row ? row.id : '', network: JSON.stringify(net)}}).done(function (r) {
+                        netResult(page, r, (row ? 'Network ' : 'New network ') + (net.networkName || n.networkName) + (row ? ' saved.' : ' created.'));
+                    });
+                }});
+            $dlg.on('click', '[data-net-tab]', function (e) {
+                e.preventDefault();
+                $dlg.find('.instanton-net-tabs li').removeClass('active');
+                $(this).parent().addClass('active');
+                $dlg.find('.instanton-net-pane').hide().filter('[data-net-pane="' + $(this).data('net-tab') + '"]').show();
+            });
+        }).fail(function (xhr) {
+            notice(page.$banner, 'danger', 'Cannot read the networks from the cloud (HTTP ' + esc(xhr.status) + ').');
         });
     }
 

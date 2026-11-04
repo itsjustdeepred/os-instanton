@@ -92,3 +92,8 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 /* front panel centred in its box, with the legend under it */
 .instanton-panel { display: flex; width: fit-content; max-width: 100%; margin: 0 auto; justify-content: center; overflow-x: auto; }
 .instanton-legend { text-align: center; }
+
+/* Wi-Fi network editor */
+.instanton-net-tabs { margin: -4px 0 14px; }
+.instanton-net-pane .checkbox { margin: 6px 0 10px; }
+.instanton-net-pane .help-block { margin: 2px 0 0 20px; }
