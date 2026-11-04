@@ -1,0 +1,34 @@
+<form>
+    <field>
+        <id>account.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Read the sites of this account.</help>
+    </field>
+    <field>
+        <id>account.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>Shown in the plugin pages. Leave empty to use the e-mail address.</help>
+    </field>
+    <field>
+        <id>account.username</id>
+        <label>Account e-mail</label>
+        <type>text</type>
+        <help>E-mail address used to sign in to the Instant On app or portal. Accounts with two-factor authentication are not supported.</help>
+    </field>
+    <field>
+        <id>account.password</id>
+        <label>Account password</label>
+        <type>password</type>
+        <help>Stored in the firewall configuration and in a file readable only by root. The firewall needs Internet access to portal.arubainstanton.com and sso.arubainstanton.com.</help>
+    </field>
+    <field>
+        <id>account.sites</id>
+        <label>Sites</label>
+        <type>select_multiple</type>
+        <style>tokenize</style>
+        <allownew>true</allownew>
+        <help>Names or IDs of the sites to read. Leave empty to read every site of the account. After saving, the sites button in the account list shows the sites of the account and lets you tick the ones to read.</help>
+    </field>
+</form>

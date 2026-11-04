@@ -39,12 +39,15 @@ export default class InstantOn extends BaseTableWidget {
             return;
         }
         const s = data.summary || {};
-        const sw = data.switch || {};
+        const switches = data.switches || [];
+        const temps = switches.map((x) => x.temperature).filter((x) => x !== null && x !== undefined);
         const ok = (v) => `<i class="fa fa-circle text-${v ? 'success' : 'danger'}"></i>`;
+        const swText = switches.length > 1
+            ? `${s.switches_online} / ${s.switches_total} ${t.online} &middot; ${s.ports_up} / ${s.ports_total} ${t.ports}`
+            : (s.switch_online ? `${s.ports_up} / ${s.ports_total} ${t.ports}` : t.offline);
         const rows = [
-            [t.switch, `${ok(s.switch_online)} <a href="/ui/instanton/index/switch">${s.switch_online
-                ? `${s.ports_up} / ${s.ports_total} ${t.ports}` : t.offline}</a>` +
-                (sw.temperature ? ` &middot; ${this._esc(sw.temperature)} &deg;C` : '')],
+            [t.switch, `${ok(s.switch_online)} <a href="/ui/instanton/index/switch">${swText}</a>` +
+                (temps.length ? ` &middot; ${this._esc(Math.max(...temps))} &deg;C` : '')],
             [t.aps, `${ok(s.aps_total && s.aps_online === s.aps_total)} <a href="/ui/instanton/index/accesspoints">` +
                 `${s.aps_online} / ${s.aps_total} ${t.online}</a>`],
             [t.clients, `<a href="/ui/instanton/index/clients">${s.clients_online}</a> ` +

@@ -34,7 +34,7 @@ use OPNsense\Base\Messages\Message;
 class InstantOn extends BaseModel
 {
     /**
-     * Credentials are only mandatory for the sources that are switched on.
+     * The monitor needs at least one enabled source.
      */
     public function performValidation($validateFullModel = false)
     {
@@ -42,33 +42,16 @@ class InstantOn extends BaseModel
         if ((string)$this->general->enabled !== '1') {
             return $messages;
         }
-        if ((string)$this->switch->enabled === '1') {
-            foreach (['host', 'username', 'password'] as $field) {
-                if ((string)$this->switch->$field === '') {
-                    $messages->appendMessage(new Message(
-                        gettext('Required while the switch source is enabled.'),
-                        'switch.' . $field
-                    ));
-                }
-            }
+        $sources = (string)$this->aps->enabled === '1' ? 1 : 0;
+        foreach ($this->switches->switch->iterateItems() as $switch) {
+            $sources += (string)$switch->enabled === '1' ? 1 : 0;
         }
-        if ((string)$this->cloud->enabled === '1') {
-            foreach (['username', 'password'] as $field) {
-                if ((string)$this->cloud->$field === '') {
-                    $messages->appendMessage(new Message(
-                        gettext('Required while the cloud source is enabled.'),
-                        'cloud.' . $field
-                    ));
-                }
-            }
+        foreach ($this->clouds->account->iterateItems() as $account) {
+            $sources += (string)$account->enabled === '1' ? 1 : 0;
         }
-        if (
-            (string)$this->switch->enabled !== '1' &&
-            (string)$this->aps->enabled !== '1' &&
-            (string)$this->cloud->enabled !== '1'
-        ) {
+        if ($sources === 0) {
             $messages->appendMessage(new Message(
-                gettext('Enable at least one data source.'),
+                gettext('Enable at least one data source: a switch, the access points or a cloud account.'),
                 'general.enabled'
             ));
         }

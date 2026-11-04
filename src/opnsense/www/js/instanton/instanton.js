@@ -168,6 +168,14 @@
             '<p>Each change is checked, sent to the switch, saved to its startup configuration (see Settings) and recorded ' +
             'under <a href="/ui/instanton/index/events">Events</a>. Editing needs <b>Allow changes</b> in ' +
             '<a href="/ui/instanton/index/settings">Settings</a> and an administrator account on the switch.</p>',
+        map: '<p>How the network hangs together, from this firewall to the switches, the access points and every device, built ' +
+            'from the MAC address tables and LLDP of the switches and, when a cloud account is set up, from the Instant On cloud.</p>' +
+            '<ul><li>Lines show the hop towards the firewall: a cable (with switch port, speed and PoE power), Wi-Fi, or a ' +
+            '<b>mesh</b> link between two access points with its signal (SNR: above 25 dB is good, below 15 dB is poor).</li>' +
+            '<li>Clients of the same kind are grouped: click a group to open it. The kind of each device is guessed from its ' +
+            'name, the cloud fingerprint, LLDP and the manufacturer of its MAC address (see the Type column on the Clients page).</li>' +
+            '<li>Switches that are not monitored but announce themselves through LLDP appear in grey; devices behind them hang below.</li>' +
+            '<li>Click a switch, access point or device to open its page.</li></ul>',
         events: '<p>Changes detected between two polls: ports going up or down, access points going offline or ' +
             'restarting, firmware changes, new devices on the network, PoE faults and polling errors, plus every ' +
             'configuration change made from the plugin (area <i>change</i>). The same events ' +
@@ -254,7 +262,7 @@
         }
         if (!meta || !meta.configured) {
             return '<div class="alert alert-info">' + icon('info-circle') + ' The plugin is not configured yet. ' +
-                'Open <a href="/ui/instanton/index/settings">Settings</a> to connect the switch.</div>';
+                'Open <a href="/ui/instanton/index/settings">Settings</a> to add the switches.</div>';
         }
         if (!meta.generated) {
             return '<div class="alert alert-info">' + icon('info-circle') + ' No data collected yet. ' +
@@ -274,7 +282,8 @@
         }
         $.each(meta.sources || {}, function (name, src) {
             if (src.enabled && !src.ok && src.error) {
-                html += '<div class="alert alert-danger">' + icon('plug') + ' <b>' + esc(name) +
+                var label = src.label ? (src.kind === 'cloud' ? 'Cloud ' : 'Switch ') + src.label : name;
+                html += '<div class="alert alert-danger">' + icon('plug') + ' <b>' + esc(label) +
                     '</b>: ' + esc(src.error) + '</div>';
             }
         });
@@ -367,7 +376,7 @@
         var html = rows.length ? $.map(rows, function (r) {
             var cls = self.rowClass ? self.rowClass(r) : '';
             return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + $.map(self.columns, function (c) {
-                var v = c.render ? c.render(r) : esc(c.key ? r[c.key] : '');
+                var v = c.render ? c.render(r) : esc(c.key ? r[c.key] : (c.text ? c.text(r) : ''));
                 return '<td class="' + (c.cls || '') + '">' + (v === undefined || v === null ? '' : v) + '</td>';
             }).join('') + '</tr>';
         }).join('') : '<tr><td colspan="' + this.columns.length + '" class="text-center text-muted">' +
@@ -424,7 +433,7 @@
         return lines.join('\n');
     }
 
-    function frontPanel(ports) {
+    function frontPanel(ports, swId) {
         if (!ports || !ports.length) {
             return '<p class="text-muted">No port data.</p>';
         }
@@ -445,7 +454,8 @@
             else if (p.role === 'uplink') { marks += icon('arrow-up'); }
             else if (p.role === 'switch') { marks += icon('sitemap'); }
             if (p.poe && p.poe.status === 'delivering') { marks += icon('bolt'); }
-            return '<a class="' + cls + '" href="/ui/instanton/index/switch#port-' + esc(p.name) + '" title="' +
+            return '<a class="' + cls + '" href="/ui/instanton/index/switch#' + (swId ? 'sw=' + esc(swId) + '&' : '') +
+                'port=' + esc(p.name) + '" title="' +
                 esc(portTooltip(p)) + '" data-port="' + esc(p.name) + '"><span class="port-num">' +
                 esc(p.name.split('/').pop()) + '</span><span class="port-marks">' + marks + '</span></a>';
         }
@@ -495,6 +505,48 @@
         });
     };
 
+    // ------------------------------------------------------------------
+    // several switches: the selected one is kept in the URL (#sw=<id>)
+    // ------------------------------------------------------------------
+    var currentSwitch = '';
+
+    function hashParam(name) {
+        var m = new RegExp('[#&]' + name + '=([^&]*)').exec(window.location.hash);
+        return m ? decodeURIComponent(m[1]) : '';
+    }
+
+    function setHashParam(name, value) {
+        var parts = window.location.hash.replace(/^#/, '').split('&').filter(function (p) {
+            return p && p.indexOf(name + '=') !== 0 && p.indexOf('=') > 0;
+        });
+        if (value) { parts.unshift(name + '=' + encodeURIComponent(value)); }
+        history.replaceState(null, '', window.location.pathname + (parts.length ? '#' + parts.join('&') : ''));
+    }
+
+    function pickSwitch(list) {
+        var wanted = hashParam('sw');
+        if (!wanted) { try { wanted = window.localStorage.getItem('instanton.switch') || ''; } catch (e) { wanted = ''; } }
+        var found = $.grep(list || [], function (s) { return s.id === wanted; })[0];
+        return found ? found.id : ((list || [])[0] || {}).id || '';
+    }
+
+    // pills to choose a switch; nothing when there is only one
+    function switchPills(list, current, onChange) {
+        if (!list || list.length < 2) { return $(''); }
+        var $nav = $('<ul class="nav nav-pills instanton-switch-pills"></ul>');
+        $.each(list, function (_, s) {
+            $nav.append($('<li' + (s.id === current ? ' class="active"' : '') + '><a href="#">' + icon('sitemap') + ' ' +
+                esc(s.label) + (s.online === false ? ' ' + badge('offline', 'danger') : '') + '</a></li>')
+                .on('click', function (e) {
+                    e.preventDefault();
+                    try { window.localStorage.setItem('instanton.switch', s.id); } catch (ex) { /* ignore */ }
+                    setHashParam('sw', s.id);
+                    onChange(s.id);
+                }));
+        });
+        return $nav;
+    }
+
     function section(title, body, extraHeader) {
         return '<div class="content-box instanton-section"><div class="instanton-section-head"><h3>' + esc(title) +
             '</h3>' + (extraHeader || '') + '</div><div class="instanton-section-body">' + body + '</div></div>';
@@ -543,33 +595,43 @@
     function overview($root) {
         var page = new Page('overview', $root);
         page.loader = function () { return api('status/summary'); };
-        var ports = [];
         page.render = function (data) {
-            var s = data.summary || {}, sw = data.switch || {};
+            var s = data.summary || {}, list = data.switches || [];
             if (!data.meta || !data.meta.generated) { page.$content.empty(); return; }
+            var one = list.length === 1 ? list[0] : null;
+            var temps = $.map(list, function (sw) { return sw.temperature || null; });
+            var swValue = !list.length ? 'none' : (one ? (one.online ? s.ports_up + ' / ' + s.ports_total : 'offline')
+                : s.switches_online + ' / ' + s.switches_total);
+            var swSub = !list.length ? 'add one in Settings' : (one ? (one.online ? 'ports connected' +
+                (one.temperature ? ' &middot; ' + esc(one.temperature) + ' &deg;C' : '') : esc(one.error || ''))
+                : 'online &middot; ' + esc(s.ports_up) + ' / ' + esc(s.ports_total) + ' ports' +
+                    (temps.length ? ' &middot; max ' + esc(Math.max.apply(null, temps)) + ' &deg;C' : ''));
             var cards = '<div class="row instanton-cards">' +
-                card('server', 'Switch', s.switch_online ? s.ports_up + ' / ' + s.ports_total : 'offline',
-                    s.switch_online ? 'ports connected' + (sw.temperature ? ' &middot; ' + esc(sw.temperature) + ' &deg;C' : '')
-                        : esc(sw.error || ''), s.switch_online ? 'ok' : 'bad', '/ui/instanton/index/switch') +
+                card('server', list.length > 1 ? 'Switches' : 'Switch', swValue, swSub,
+                    list.length && s.switches_online === s.switches_total ? 'ok' : 'bad', '/ui/instanton/index/switch') +
                 card('wifi', 'Access points', s.aps_online + ' / ' + s.aps_total, 'online' +
-                    (data.swarm_size ? ' &middot; swarm of ' + esc(data.swarm_size) : ''),
+                    (data.swarm_size ? ' &middot; swarm of ' + esc(data.swarm_size) : '') +
+                    (s.cloud_sites ? ' &middot; ' + esc(s.cloud_sites) + ' cloud site' + (s.cloud_sites > 1 ? 's' : '') : ''),
                     s.aps_total && s.aps_online < s.aps_total ? 'bad' : 'ok', '/ui/instanton/index/accesspoints') +
                 card('laptop', 'Clients', esc(s.clients_online), esc(s.clients_wireless) + ' wireless &middot; ' +
                     esc(s.clients_wired) + ' wired', 'ok', '/ui/instanton/index/clients') +
                 card('bolt', 'Power over Ethernet', s.poe_w !== null && s.poe_w !== undefined ? esc(s.poe_w) + ' W' : '-',
                     s.poe_percent !== null && s.poe_percent !== undefined ? esc(s.poe_percent) + '% of ' +
-                        esc((sw.poe || {}).nominal_w) + ' W budget' : '', 'ok', '/ui/instanton/index/switch#poe') +
+                        esc(s.poe_nominal_w) + ' W budget' : '', 'ok', '/ui/instanton/index/switch#poe') +
                 '</div>';
             var warn = s.warnings ? ' <span class="badge" title="Warnings and critical problems">' + esc(s.warnings) + '</span>' : '';
+            var panels = $.map(list, function (sw) {
+                if (!sw.online) {
+                    return section('Front panel - ' + (sw.label || sw.host), '<p class="text-danger">' + icon('plug') + ' ' +
+                        esc(sw.error || 'offline') + '</p>');
+                }
+                return section('Front panel' + (sw.label ? ' - ' + sw.label : ''), frontPanel(sw.ports, sw.id),
+                    '<a class="small" style="margin-left:auto" href="/ui/instanton/index/switch#sw=' + esc(sw.id) + '">details &raquo;</a>');
+            }).join('');
             page.$content.html(cards +
                 '<div class="row"><div class="col-md-7">' + section('Checks', insightList(data.insights), warn) +
                 '</div><div class="col-md-5">' + section('Recent events', eventList(data.events)) + '</div></div>' +
-                '<div id="instanton-panel-holder"></div>' +
-                section('Access points', '<div id="instanton-ap-mini"></div>'));
-            api('status/ports').done(function (pd) {
-                ports = pd.ports || [];
-                $('#instanton-panel-holder').html(section('Front panel' + (sw.name ? ' - ' + sw.name : ''), frontPanel(ports)));
-            });
+                panels + section('Access points', '<div id="instanton-ap-mini"></div>'));
             var t = new Table($('#instanton-ap-mini'), {search: false, sortKey: 0, columns: apColumns(true),
                 emptyText: 'No access points found.'});
             t.setRows(data.aps || []);
@@ -590,10 +652,11 @@
                 return /^[\d.]+$/.test(a.host) ? '<a href="http://' + esc(a.host) + ':8080/" target="_blank" rel="noopener" ' +
                     'title="Open the diagnostic page">' + esc(a.host) + '</a>' : esc(a.host);
             }},
-            {label: 'Uplink', title: 'Switch port, link speed and PoE draw', text: function (a) { return a.port || 'mesh'; },
+            {label: 'Uplink', title: 'Switch port, link speed and PoE draw', text: function (a) { return a.port ? (a.switch_name || '') + ' ' + a.port : 'mesh'; },
                 render: function (a) {
                     if (!a.port) { return '<span class="text-muted" title="' + esc(a.uplink || '') + '">mesh / other switch</span>'; }
-                    return '<a href="/ui/instanton/index/switch#port-' + esc(a.port) + '">' + esc(a.port) + '</a> &middot; ' +
+                    return '<a href="/ui/instanton/index/switch#' + (a.switch ? 'sw=' + esc(a.switch) + '&' : '') + 'port=' +
+                        esc(a.port) + '">' + (a.switch_name && multiSwitch ? esc(a.switch_name) + ' ' : '') + esc(a.port) + '</a> &middot; ' +
                         esc(speed(a.speed)) + (a.poe_w ? ' &middot; ' + esc(a.poe_w) + ' W' : '');
                 }},
             {label: 'Clients', title: 'Devices learned on the switch port of this access point', key: 'clients',
@@ -625,20 +688,40 @@
     }
 
     var latestPorts = [];
+    var multiSwitch = false;
+    var switchList = [];
 
     function switchPage($root) {
         var page = new Page('switch', $root);
-        page.loader = function () { return api('status/switch'); };
+        currentSwitch = hashParam('sw');
+        page.loader = function () { return api('status/switch/' + encodeURIComponent(currentSwitch)); };
         var portTable, logTable, vlanTable;
+        var $pills = $('<div class="instanton-pills-holder"></div>').insertBefore(page.$content);
         page.render = function (data) {
+            var list = (data.meta || {}).switches || [];
+            multiSwitch = list.length > 1;
+            var wanted = pickSwitch(list);
+            if (wanted && (!data.switch || data.switch.id !== wanted)) {
+                currentSwitch = wanted;
+                page.reload();
+                return;
+            }
             var sw = data.switch || {};
+            currentSwitch = sw.id || '';
+            $pills.empty().append(switchPills(list, currentSwitch, function (id) { currentSwitch = id; portTable = null; page.reload(); }));
+            if (!list.length) {
+                page.$content.html('<p class="text-muted">No switch is configured: add one in <a href="/ui/instanton/index/settings">Settings</a>.</p>');
+                return;
+            }
             if (!sw.host && !(data.meta || {}).generated) { page.$content.empty(); return; }
             if (!sw.online) {
-                page.$content.html(section('Switch', '<p class="text-danger">' + icon('plug') + ' The switch could not be read: ' +
+                portTable = null;
+                page.$content.html(section('Switch ' + (sw.label || ''), '<p class="text-danger">' + icon('plug') + ' The switch could not be read: ' +
                     esc(sw.error || 'unknown error') + '</p>'));
                 return;
             }
             canChange = !!(data.meta || {}).allow_changes;
+            switchList = list;
             latestPorts = sw.ports || [];
             if (!portTable) {
                 var fans = $.map(sw.fans || [], function (f) { return 'fan ' + f.id + ': ' + f.status; }).join(', ');
@@ -654,7 +737,7 @@
                         '<div id="instanton-log"></div>') + '</div></div>');
                 portTable = new Table($('#instanton-ports'), {sortKey: 0, columns: portColumns(), id: 'ports',
                     extraFilter: function (p) {
-                        return !$('#instanton-only-up').is(':checked') || p.up || window.location.hash === '#port-' + p.name;
+                        return !$('#instanton-only-up').is(':checked') || p.up || hashParam('port') === p.name;
                     },
                     rowClass: function (p) { return (!p.up ? 'instanton-dim' : '') + ' port-row-' + p.name.replace('/', '-'); }});
                 vlanTable = new Table($('#instanton-vlans'), {search: false, sortKey: 0, columns: [
@@ -687,7 +770,8 @@
             }
             var uptime = duration(sw.uptime);
             $('#instanton-sw-info').html(section('Device', kv([
-                ['Name', esc(sw.name)], ['Model', esc(sw.model)], ['Serial number', esc(sw.serial)],
+                ['Name', esc(sw.name) + (sw.label && sw.label !== sw.name ? ' <span class="text-muted small">(' + esc(sw.label) + ' in this plugin)</span>' : '')],
+                ['Model', esc(sw.model)], ['Serial number', esc(sw.serial)],
                 ['MAC address', esc(sw.mac)], ['Firmware', esc(sw.firmware) + (sw.firmware_date ? ' <span class="text-muted small">(' + esc(sw.firmware_date) + ')</span>' : '')],
                 ['Boot loader', esc(sw.boot_version)], ['Address', '<a href="https://' + esc(sw.host) + '/" target="_blank" rel="noopener">' + esc(sw.host) + '</a>'],
                 ['Location', esc(sw.location)], ['Modules', $.map(sw.modules || [], function (m) { return esc(m.port + ': ' + m.type); }).join('<br>')]
@@ -710,7 +794,7 @@
                 ['Configuration', sw.config_saved ? badge('saved', 'success') : badge('unsaved changes', 'warning')],
                 ['Web sessions', $.map(sw.sessions || [], function (s) { return esc(s.user + ' from ' + s.address); }).join('<br>'), 'Users logged in to the switch web interface right now']
             ])));
-            $('#instanton-sw-panel').html(section('Front panel', frontPanel(sw.ports)));
+            $('#instanton-sw-panel').html(section('Front panel', frontPanel(sw.ports, sw.id)));
             portTable.setRows(sw.ports || []);
             var vlanPorts = {};
             $.each(sw.ports || [], function (_, p) {
@@ -721,7 +805,7 @@
                 var list = vlanPorts[String(v.id)] || [];
                 return {id: v.id, name: v.name, ports: list.length > 8 ? list.length + ' ports' : list.join(' ')};
             }));
-            api('status/log').done(function (ld) { logTable.setRows(ld.log || []); });
+            api('status/log/' + encodeURIComponent(sw.id || '')).done(function (ld) { logTable.setRows(ld.log || []); });
             highlightHash();
         };
         page.reload();
@@ -741,9 +825,9 @@
     }
 
     function highlightHash() {
-        var m = /#port-(.+)$/.exec(window.location.hash);
-        if (!m) { return; }
-        var $row = $('.port-row-' + decodeURIComponent(m[1]).replace('/', '-'));
+        var port = hashParam('port');
+        if (!port) { return; }
+        var $row = $('.port-row-' + port.replace('/', '-'));
         if ($row.length && !$row.data('flashed')) {
             $row.data('flashed', true).addClass('instanton-flash');
             $('html, body').animate({scrollTop: $row.offset().top - 120}, 300);
@@ -753,7 +837,7 @@
     function portColumns() {
         var cols = [
             {label: 'Port', key: 'name', sortValue: function (p) { return p.id; }, render: function (p) {
-                return '<a id="port-' + esc(p.name) + '"></a><b>' + esc(p.name) + '</b>';
+                return '<b>' + esc(p.name) + '</b>';
             }},
             {label: 'Description', key: 'description'},
             {label: 'Link', title: 'Link state, speed and duplex', text: function (p) { return p.up ? 'up ' + speed(p.speed) : (p.enabled ? 'down' : 'disabled'); },
@@ -766,7 +850,9 @@
                 }},
             {label: 'Role', key: 'role', render: function (p) {
                 var ic = {ap: 'wifi', uplink: 'arrow-up', 'switch': 'sitemap', device: 'desktop'};
-                return p.role && p.role !== 'empty' ? icon(ic[p.role] || 'circle-o') + ' ' + esc(p.role) : '';
+                var peer = p.peer ? $.grep(switchList, function (x) { return x.id === p.peer; })[0] : null;
+                return p.role && p.role !== 'empty' ? icon(ic[p.role] || 'circle-o') + ' ' + esc(p.role) +
+                    (peer ? ' <a class="small" href="/ui/instanton/index/switch#sw=' + esc(peer.id) + '">' + esc(peer.label) + '</a>' : '') : '';
             }},
             {label: 'Neighbour', title: 'Device announced through LLDP', text: function (p) { return (p.neighbor || {}).name || ''; },
                 render: function (p) {
@@ -796,7 +882,10 @@
                 cls: 'text-nowrap'},
             {label: 'MACs', title: 'Addresses learned on this port; click to list them', key: 'mac_count',
                 sortValue: function (p) { return p.mac_count; },
-                render: function (p) { return p.mac_count ? '<a href="/ui/instanton/index/clients#port=' + esc(p.name) + '">' + esc(p.mac_count) + '</a>' : ''; }},
+                render: function (p) {
+                    return p.mac_count ? '<a href="/ui/instanton/index/clients#' + (currentSwitch ? 'sw=' + esc(currentSwitch) + '&' : '') +
+                        'port=' + esc(p.name) + '">' + esc(p.mac_count) + '</a>' : '';
+                }},
             {label: 'Errors', title: 'Packet errors since the counters were cleared', key: 'errors', sortValue: function (p) { return p.errors; },
                 render: function (p) { return p.errors ? '<span class="text-danger">' + esc(p.errors) + '</span>' : ''; }},
             {label: 'Flaps', title: 'Link-down messages in the switch log (switch-wide outages excluded)', key: 'flaps',
@@ -815,32 +904,74 @@
     function accessPointsPage($root) {
         var page = new Page('accesspoints', $root);
         page.loader = function () { return api('status/aps'); };
-        var table, cloudTable;
+        var table, cloudTable, netTable;
         page.render = function (data) {
+            multiSwitch = ((data.meta || {}).switches || []).length > 1;
+            var sites = data.cloud_sites || [];
+            var manySites = sites.length > 1;
             if (!table) {
-                page.$content.html(section('Access points', '<div id="instanton-aps"></div>') + '<div id="instanton-cloud-devices"></div>');
+                page.$content.html(section('Access points', '<div id="instanton-aps"></div>') +
+                    '<div id="instanton-cloud-devices"></div><div id="instanton-cloud-networks"></div>');
                 table = new Table($('#instanton-aps'), {sortKey: 0, columns: apColumns(false), emptyText:
-                    'No access points found. Enable discovery through the switch or add them by address in Settings.'});
+                    'No access points found. Enable discovery through the switches, add them by address or add a cloud account in Settings.'});
             }
             table.setRows(data.aps || []);
             var cd = data.cloud_devices || [];
-            if (cd.length) {
-                if (!cloudTable) {
-                    $('#instanton-cloud-devices').html(section('Cloud inventory', '<div id="instanton-cloud-table"></div>'));
-                    cloudTable = new Table($('#instanton-cloud-table'), {sortKey: 0, columns: [
-                        {label: 'Name', key: 'name'}, {label: 'Type', key: 'type'}, {label: 'Model', key: 'model'},
-                        {label: 'Status', key: 'status'}, {label: 'IP', key: 'ip'}, {label: 'Firmware', key: 'firmware'},
-                        {label: 'Uptime', sortValue: function (d) { return d.uptime || 0; }, render: function (d) { return esc(duration(d.uptime)); }},
-                        {label: 'Radios', sort: false, render: function (d) {
-                            return $.map(d.radios || [], function (r) {
-                                return esc(r.band + ' ch ' + r.channel + (r.clients !== null && r.clients !== undefined ? ', ' + r.clients + ' clients' : '') +
-                                    (r.utilization !== null && r.utilization !== undefined ? ', ' + r.utilization + '% busy' : ''));
-                            }).join('<br>');
-                        }}
-                    ]});
-                }
-                cloudTable.setRows(cd);
+            if (cd.length && !cloudTable) {
+                $('#instanton-cloud-devices').html(section('Cloud inventory', '<div id="instanton-cloud-table"></div>'));
+                cloudTable = new Table($('#instanton-cloud-table'), {sortKey: 1, columns: [
+                    {label: 'Site', key: 'site', cls: manySites ? '' : 'hidden'},
+                    {label: 'Name', key: 'name', render: function (d) {
+                        return esc(d.name) + '<div class="small text-muted">' + esc(d.model) + '</div>';
+                    }},
+                    {label: 'Status', key: 'status', render: function (d) {
+                        return onlineBadge(d.status === 'up', 'up', d.status || 'down') +
+                            (d.health && d.health !== 'good' ? ' ' + badge(d.health, d.health === 'poor' ? 'danger' : 'warning',
+                                (d.problems || []).join(', ')) : '');
+                    }},
+                    {label: 'Uplink', title: 'Wired, or wireless mesh through another access point with its signal (SNR)',
+                        text: function (d) { return d.mesh_parent || 'wired'; }, render: function (d) {
+                            if (!d.mesh_parent) { return '<span class="text-muted">wired</span>'; }
+                            var q = d.mesh_quality || (d.mesh_snr >= 25 ? 'good' : (d.mesh_snr >= 15 ? 'fair' : 'poor'));
+                            return icon('wifi') + ' mesh via ' + esc(d.mesh_parent) + ' ' +
+                                badge((d.mesh_snr !== null && d.mesh_snr !== undefined ? d.mesh_snr + ' dB ' : '') + (d.mesh_band || ''),
+                                    q === 'good' ? 'success' : (q === 'fair' ? 'warning' : 'danger'), 'Mesh link quality: ' + q);
+                        }},
+                    {label: 'IP', key: 'ip'},
+                    {label: 'Firmware', key: 'firmware', render: function (d) {
+                        return esc(d.firmware) + (d.up_to_date === false ? ' ' + badge('update available', 'warning') : '');
+                    }},
+                    {label: 'Uptime', sortValue: function (d) { return d.uptime || 0; }, render: function (d) { return esc(duration(d.uptime)); }},
+                    {label: 'Radios', sort: false, render: function (d) {
+                        return $.map(d.radios || [], function (r) {
+                            return esc(r.band + ' ch ' + r.channel + (r.clients !== null && r.clients !== undefined ? ', ' + r.clients + ' clients' : '') +
+                                (r.utilization !== null && r.utilization !== undefined ? ', ' + r.utilization + '% busy' : '') +
+                                (r.tx_power ? ', ' + r.tx_power + ' dBm' : ''));
+                        }).join('<br>');
+                    }}
+                ]});
             }
+            if (cloudTable) { cloudTable.setRows(cd); }
+            var nets = data.cloud_networks || [];
+            if (nets.length && !netTable) {
+                $('#instanton-cloud-networks').html(section('Wi-Fi networks', '<div id="instanton-net-table"></div>'));
+                netTable = new Table($('#instanton-net-table'), {search: false, sortKey: 1, columns: [
+                    {label: 'Site', key: 'site', cls: manySites ? '' : 'hidden'},
+                    {label: 'SSID', key: 'name', render: function (n) {
+                        return '<b>' + esc(n.name) + '</b>' + (n.hidden ? ' ' + badge('hidden', 'default') : '') +
+                            (n.enabled === false ? ' ' + badge('off', 'default') : '');
+                    }},
+                    {label: 'Type', key: 'type'},
+                    {label: 'Security', text: function (n) { return (n.security || '') + ' ' + (n.authentication || ''); },
+                        render: function (n) { return esc((n.security || '').toUpperCase()) + ' <span class="small text-muted">' + esc(n.authentication || '') + '</span>'; }},
+                    {label: 'VLAN', key: 'vlan'},
+                    {label: 'Bands', text: function (n) { return (n.bands || []).join(', '); },
+                        render: function (n) { return esc((n.bands || []).join(', ')); }},
+                    {label: 'Access points', key: 'aps'},
+                    {label: 'Clients', key: 'clients', sortValue: function (n) { return n.clients || 0; }}
+                ]});
+            }
+            if (netTable) { netTable.setRows(nets); }
         };
         page.reload();
     }
@@ -848,9 +979,9 @@
     function clientsPage($root) {
         var page = new Page('clients', $root);
         page.loader = function () { return api('status/clients'); };
-        var table, filters = {state: 'online', conn: '', ap: '', vlan: '', port: ''};
-        var m = /#port=(.+)$/.exec(window.location.hash);
-        if (m) { filters.port = decodeURIComponent(m[1]); filters.state = ''; }
+        var table, filters = {state: 'online', conn: '', ap: '', vlan: '', type: '', sw: '', port: '', mac: ''};
+        if (hashParam('port')) { filters.port = hashParam('port'); filters.sw = hashParam('sw'); filters.state = ''; }
+        if (hashParam('mac')) { filters.mac = hashParam('mac').toLowerCase(); filters.state = ''; }
         page.render = function (data) {
             var rows = data.clients || [];
             if (!table) {
@@ -861,10 +992,11 @@
                     '<option value="wireless">wireless only</option><option value="wired">wired only</option></select> ' +
                     '<select class="form-control input-sm" data-f="ap" aria-label="Access point"><option value="">any access point</option></select> ' +
                     '<select class="form-control input-sm" data-f="vlan" aria-label="VLAN"><option value="">any VLAN</option></select> ' +
+                    '<select class="form-control input-sm" data-f="type" aria-label="Device type"><option value="">any type</option></select> ' +
                     '<span class="instanton-port-filter"></span>' +
                     '<button class="btn btn-default btn-sm pull-right" type="button" id="instanton-csv">' + icon('download') + ' CSV</button>' +
                     '</div><div id="instanton-clients"></div>'));
-                table = new Table($('#instanton-clients'), {sortKey: 1, columns: clientColumns(), emptyText: 'No clients seen yet.',
+                table = new Table($('#instanton-clients'), {sortKey: 2, columns: clientColumns(), emptyText: 'No clients seen yet.',
                     rowClass: function (c) { return c.online ? '' : 'instanton-dim'; },
                     extraFilter: function (c) {
                         if (filters.state === 'online' && !c.online) { return false; }
@@ -872,22 +1004,33 @@
                         if (filters.conn && c.connection !== filters.conn) { return false; }
                         if (filters.ap && c.ap !== filters.ap) { return false; }
                         if (filters.vlan && String(c.vlan) !== filters.vlan) { return false; }
-                        if (filters.port && c.port !== filters.port) { return false; }
+                        if (filters.type && c.type_label !== filters.type) { return false; }
+                        if (filters.port && (c.port !== filters.port || (filters.sw && c.switch && c.switch !== filters.sw))) { return false; }
+                        if (filters.mac && c.mac !== filters.mac) { return false; }
                         return true;
                     }});
                 page.$content.find('select[data-f]').each(function () { $(this).val(filters[$(this).data('f')]); })
                     .on('change', function () { filters[$(this).data('f')] = $(this).val(); table.render(); });
                 $('#instanton-csv').on('click', function () { table.csv('instanton-clients.csv'); });
             }
-            var aps = {}, vlans = {};
-            $.each(rows, function (_, c) { if (c.ap) { aps[c.ap] = 1; } if (c.vlan !== null && c.vlan !== undefined) { vlans[c.vlan] = 1; } });
+            var aps = {}, vlans = {}, types = {};
+            $.each(rows, function (_, c) {
+                if (c.ap) { aps[c.ap] = 1; }
+                if (c.vlan !== null && c.vlan !== undefined) { vlans[c.vlan] = 1; }
+                if (c.type_label) { types[c.type_label] = 1; }
+            });
+            fillSelect(page.$content.find('select[data-f=type]'), 'any type', Object.keys(types).sort(), filters.type);
             fillSelect(page.$content.find('select[data-f=ap]'), 'any access point', Object.keys(aps).sort(), filters.ap);
             fillSelect(page.$content.find('select[data-f=vlan]'), 'any VLAN', Object.keys(vlans).sort(function (a, b) { return a - b; }), filters.vlan);
             var $pf = page.$content.find('.instanton-port-filter');
-            if (filters.port) {
-                $pf.html('<span class="label label-primary">port ' + esc(filters.port) + ' <a href="#" class="instanton-clear-port" ' +
-                    'style="color:#fff" aria-label="Clear port filter">&times;</a></span>');
-                $pf.find('a').on('click', function (e) { e.preventDefault(); filters.port = ''; history.replaceState(null, '', window.location.pathname); $pf.empty(); table.render(); });
+            if (filters.port || filters.mac) {
+                var swName = filters.sw ? ($.grep(rows, function (c) { return c.switch === filters.sw && c.switch_name; })[0] || {}).switch_name : '';
+                $pf.html('<span class="label label-primary">' + (filters.mac ? esc(filters.mac) : 'port ' + esc((swName ? swName + ' ' : '') + filters.port)) +
+                    ' <a href="#" class="instanton-clear-port" style="color:#fff" aria-label="Clear filter">&times;</a></span>');
+                $pf.find('a').on('click', function (e) {
+                    e.preventDefault(); filters.port = ''; filters.sw = ''; filters.mac = '';
+                    history.replaceState(null, '', window.location.pathname); $pf.empty(); table.render();
+                });
             }
             table.setRows(rows);
         };
@@ -908,6 +1051,14 @@
             {label: 'State', sortValue: function (c) { return c.online ? 0 : 1; }, text: function (c) { return c.online ? 'online' : 'offline'; },
                 render: function (c) { return c.online ? '<span class="text-success" title="online">' + icon('circle') + '</span>'
                     : '<span class="text-muted" title="last seen ' + esc(datetime(c.last_seen)) + '">' + icon('circle-o') + '</span>'; }, csvValue: function (c) { return c.online ? 'online' : 'offline'; }},
+            {label: 'Type', title: 'Kind of device, guessed from its name, the cloud fingerprint, LLDP or the manufacturer of the MAC address',
+                text: function (c) { return c.type_label || ''; }, sortValue: function (c) { return c.type_label || 'zzz'; },
+                render: function (c) {
+                    if (!c.type || c.type === 'unknown') { return '<span class="text-muted" title="Not recognised">' + icon('question') + '</span>'; }
+                    var how = {name: 'its name', cloud: 'the Instant On cloud', lldp: 'LLDP', vendor: 'the manufacturer', history: 'an earlier poll'};
+                    return '<span title="' + esc(c.type_label + ' (from ' + (how[c.type_source] || c.type_source || '?') + ')') + '">' +
+                        icon(c.type_icon || 'circle-o') + ' <span class="small">' + esc(c.type_label) + '</span></span>';
+                }},
             {label: 'Name', title: 'Firewall static mapping description, DHCP host name, or the description of the switch port when it has a single device',
                 text: function (c) { return c.description || c.hostname || c.port_label || ''; }, render: function (c) {
                 var name = c.description || c.hostname;
@@ -928,11 +1079,14 @@
             }, csvValue: function (c) { return c.mac; }},
             {label: 'Vendor', key: 'vendor', cls: 'hidden', csv: true},
             {label: 'Connection', title: 'Access point (wireless) or switch port (wired)',
-                text: function (c) { return c.connection + ' ' + (c.ap || c.port); },
+                text: function (c) { return c.connection + ' ' + (c.ap || ((c.switch_name || '') + ' ' + c.port)); },
                 render: function (c) {
-                    var where = c.connection === 'wireless' ? icon('wifi') + ' ' + esc(c.ap || 'wireless') : icon('plug') + ' port ' + esc(c.port);
+                    var port = (c.switch_name ? c.switch_name + ' ' : '') + c.port;
+                    var where = c.connection === 'wireless' ? icon('wifi') + ' ' + esc(c.ap || 'wireless') :
+                        (c.port ? icon('plug') + ' port ' + esc(port) : icon('plug') + ' wired');
                     var extra = [];
-                    if (c.connection === 'wireless' && c.port) { extra.push('port ' + esc(c.port)); }
+                    if (c.connection === 'wireless' && c.port) { extra.push('port ' + esc(port)); }
+                    if (c.site) { extra.push(esc(c.site)); }
                     if (c.ssid) { extra.push(esc(c.ssid)); }
                     if (c.band) { extra.push(esc(c.band)); }
                     if (c.roamed_from) { extra.push('roamed from ' + esc(c.roamed_from)); }
@@ -1008,8 +1162,40 @@
         $target.html($.map(data.result || {}, function (r, k) {
             var kind = r.ok === true ? 'success' : (r.ok === false ? 'danger' : 'info');
             var ic = r.ok === true ? 'check-circle' : (r.ok === false ? 'times-circle' : 'info-circle');
-            return '<div class="alert alert-' + kind + ' instanton-test">' + icon(ic) + ' <b>' + esc(names[k] || k) + ':</b> ' + esc(r.message) + '</div>';
+            return '<div class="alert alert-' + kind + ' instanton-test">' + icon(ic) + ' <b>' + esc(r.label || names[k] || k) +
+                ':</b> ' + esc(r.message) + '</div>';
         }).join(''));
+    }
+
+    // site selection of a saved cloud account (Settings page)
+    function cloudSites(uuid, done) {
+        var $m = dialog({title: 'Sites of this account', ok: 'Save selection',
+            intro: icon('spinner fa-pulse') + ' Signing in to the Instant On cloud...',
+            submit: function () {
+                var picked = [], all = $m.find('.instanton-site').length;
+                $m.find('.instanton-site:checked').each(function () { picked.push($(this).data('site')); });
+                if (!picked.length) { return null; }
+                var sites = picked.length === all ? '' : picked.join(',');
+                return $.ajax({url: API + 'settings/setAccount/' + encodeURIComponent(uuid), type: 'POST', dataType: 'json',
+                    contentType: 'application/json', data: JSON.stringify({account: {sites: sites}})}).always(done);
+            }});
+        var $ok = $m.find('.instanton-ok').prop('disabled', true);
+        api('service/cloudsites/' + encodeURIComponent(uuid), 'POST').done(function (r) {
+            var $intro = $m.find('.modal-body p').first();
+            if (!r || r.status !== 'ok') {
+                $intro.html('<span class="text-danger">' + icon('times-circle') + ' ' + esc((r && r.message) || 'No answer.') + '</span>');
+                return;
+            }
+            $intro.html('Tick the sites the monitor should read. Ticking all of them also reads sites added to the account later.');
+            $.each(r.sites || [], function (_, site) {
+                $m.find('.modal-body').append('<div class="checkbox"><label><input type="checkbox" class="instanton-site" data-site="' +
+                    esc(site.name) + '"' + (site.selected ? ' checked' : '') + '> <b>' + esc(site.name) + '</b> <span class="text-muted small">' +
+                    esc([site.role, site.health ? 'health ' + site.health : ''].filter(Boolean).join(' · ')) + '</span></label></div>');
+            });
+            $ok.prop('disabled', false);
+        }).fail(function (xhr) {
+            $m.find('.modal-body p').first().html('<span class="text-danger">HTTP ' + esc(xhr.status) + '</span>');
+        });
     }
 
     // ------------------------------------------------------------------
@@ -1019,7 +1205,7 @@
 
     function applyChange(action, params) {
         return $.ajax({url: API + 'config/apply', type: 'POST', dataType: 'json', cache: false,
-            data: {request: JSON.stringify({action: action, params: params || {}})}});
+            data: {request: JSON.stringify({switch: currentSwitch, action: action, params: params || {}})}});
     }
 
     function notice($target, kind, html) {
@@ -1097,9 +1283,9 @@
 
     function portDialog(p, $notice, after) {
         var poe = p.poe;
-        var uplink = p.role === 'uplink';
+        var uplink = p.role === 'uplink' || !!p.peer;
         var tools = $('<div class="instanton-port-tools"></div>');
-        if (poe && poe.enabled) {
+        if (poe && poe.enabled && !uplink) {
             tools.append($('<button type="button" class="btn btn-default btn-sm">' + icon('power-off') + ' Power-cycle PoE</button>')
                 .on('click', function () {
                     $(this).closest('.modal').modal('hide');
@@ -1116,7 +1302,7 @@
                     dialog({title: 'Cable test on port ' + p.name, ok: 'Start test',
                         intro: 'The switch measures the copper pairs of the cable (length, open or short circuits). ' +
                             'The results appear in the switch web interface under Diagnostics &gt; Cable Test, or on the ' +
-                            '<a href="/ui/instanton/index/configuration#ports">Configuration</a> page (Cable test section).',
+                            '<a href="/ui/instanton/index/configuration#sw=' + esc(currentSwitch) + '&tab=ports">Configuration</a> page (Cable test section).',
                         confirm: 'The link of this port drops for a few seconds during the test.',
                         submit: function () { return applyChange('cable_test', {port: p.name, confirm: true}).done(function (r) { changeResult($notice, r); }); }});
                 }));
@@ -1125,7 +1311,7 @@
             {name: 'description', label: 'Description', value: p.description, help: 'Shown on the switch and in this plugin; ' +
                 'a port with one device and a description names that device in the client list. Up to 64 characters.'},
             {name: 'enabled', label: 'Port enabled', type: 'checkbox', value: p.enabled, help: uplink ?
-                '<b>This port leads to the firewall and cannot be switched off from here.</b>' :
+                '<b>This port leads to the firewall or to another monitored switch and cannot be switched off from here.</b>' :
                 'A disabled port carries no traffic and gives no PoE power.'}
         ];
         if (poe) {
@@ -1140,7 +1326,7 @@
                 if (v.description !== (p.description || '')) { params.description = v.description; }
                 if (!uplink && v.enabled !== p.enabled) { params.enabled = v.enabled; }
                 if (Object.keys(params).length > 1) { steps.push(['port', params]); }
-                if (poe && v.poe !== poe.enabled) { steps.push(['poe', {port: p.name, enabled: v.poe}]); }
+                if (poe && v.poe !== poe.enabled && !(uplink && !v.poe)) { steps.push(['poe', {port: p.name, enabled: v.poe}]); }
                 if (!steps.length) { notice($notice, 'info', 'Nothing changed.'); return null; }
                 var chain = $.Deferred().resolve().promise();
                 $.each(steps, function (_, s) {
@@ -1199,15 +1385,18 @@
     function configurationPage($root) {
         var page = new Page('configuration', $root);
         var data = null;
-        var group = (window.location.hash || '#system').slice(1);
+        var group = hashParam('tab') || 'system';
+        currentSwitch = hashParam('sw');
         page.noMeta = true;
         page.$bar.find('.instanton-auto, .instanton-refresh').remove();
-        page.loader = function () { return $.ajax({url: API + 'config/read/cached', dataType: 'json', cache: false}); };
+        var $pills = $('<div class="instanton-pills-holder"></div>').insertBefore(page.$content);
+        function swPath() { return encodeURIComponent(currentSwitch || '_') + '/'; }
+        page.loader = function () { return $.ajax({url: API + 'config/read/' + swPath() + 'cached', dataType: 'json', cache: false}); };
 
         function read(what) {
             var $btn = page.$content.find('.instanton-read');
             $btn.prop('disabled', true).find('i').addClass('fa-spin');
-            return $.ajax({url: API + 'config/read/' + encodeURIComponent(what), type: 'POST', dataType: 'json', cache: false})
+            return $.ajax({url: API + 'config/read/' + swPath() + encodeURIComponent(what), type: 'POST', dataType: 'json', cache: false})
                 .done(function (d) {
                     if (d.status !== 'ok') { notice(page.$banner, 'danger', esc(d.message || 'Cannot read the switch.')); return; }
                     data = d;
@@ -1349,7 +1538,7 @@
                     return [{label: humanize(c), key: c, render: function (r) {
                         var v = r[c];
                         if (c === 'interfaceName' && data.uplinks && data.uplinks.indexOf(v) >= 0) {
-                            return esc(v) + ' ' + badge('firewall', 'default', 'Leads to the firewall: protected from changes');
+                            return esc(v) + ' ' + badge('protected', 'default', 'Leads to the firewall or to another monitored switch: protected from changes');
                         }
                         return esc(v);
                     }}];
@@ -1431,7 +1620,7 @@
         function draw() {
             if (!data) { return; }
             var tabs = '<ul class="nav nav-tabs instanton-tabs" role="tablist">' + $.map(data.groups || [], function (g) {
-                return '<li' + (g[0] === group ? ' class="active"' : '') + '><a href="#' + esc(g[0]) + '" data-group="' + esc(g[0]) + '">' +
+                return '<li' + (g[0] === group ? ' class="active"' : '') + '><a href="#tab=' + esc(g[0]) + '" data-group="' + esc(g[0]) + '">' +
                     esc(g[1]) + '</a></li>';
             }).join('') + '</ul>';
             var tools = '<div class="instanton-config-tools"><button class="btn btn-default btn-sm instanton-read" type="button" ' +
@@ -1449,7 +1638,7 @@
             page.$content.find('[data-group]').on('click', function (e) {
                 e.preventDefault();
                 group = $(this).data('group');
-                history.replaceState(null, '', '#' + group);
+                setHashParam('tab', group);
                 var missing = $.grep(Object.keys(data.catalog), function (n) {
                     return data.catalog[n].group === group && data.sections[n] === undefined && !(data.errors || {})[n];
                 });
@@ -1461,6 +1650,15 @@
         }
 
         page.render = function (d) {
+            var list = d.switches || [];
+            var wanted = pickSwitch(list);
+            if (wanted && d.switch && d.switch !== wanted) {
+                currentSwitch = wanted;
+                page.reload();
+                return;
+            }
+            currentSwitch = d.switch || currentSwitch;
+            $pills.empty().append(switchPills(list, currentSwitch, function (id) { currentSwitch = id; page.reload(); }));
             if (d.status !== 'ok') { page.$content.html('<p class="text-danger">' + esc(d.message || 'No data.') + '</p>'); return; }
             data = d;
             canChange = !!d.allow_changes;
@@ -1471,10 +1669,171 @@
         page.reload();
     }
 
+    // ------------------------------------------------------------------
+    // network map
+    // ------------------------------------------------------------------
+    var MAP = {colW: 270, nodeW: 210, rowH: 44, pad: 16};
+
+    function mapPage($root) {
+        var page = new Page('map', $root);
+        page.loader = function () { return api('status/topology'); };
+        var opts = {group: true, clients: true, search: ''};
+        var expanded = {};
+        try { opts.group = window.localStorage.getItem('instanton.map.group') !== '0'; } catch (e) { /* ignore */ }
+        var nodes = [];
+        var $tools = $('<div class="form-inline instanton-filters instanton-map-tools">' +
+            '<label class="checkbox-inline"><input type="checkbox" data-o="clients" checked> clients</label> ' +
+            '<label class="checkbox-inline"><input type="checkbox" data-o="group"' + (opts.group ? ' checked' : '') + '> group clients by type</label> ' +
+            '<input type="search" class="form-control input-sm" placeholder="Find name, IP or MAC..." aria-label="Find"> ' +
+            '<span class="instanton-map-legend small text-muted">' +
+            '<span class="lk lk-wired"></span> cable <span class="lk lk-wireless"></span> Wi-Fi <span class="lk lk-mesh"></span> mesh ' +
+            '<span class="lk lk-unknown"></span> not detected <span class="lk lk-down"></span> link down</span></div>');
+        var $canvas = $('<div class="instanton-map"></div>');
+        page.$content.before($tools);
+        $tools.find('[data-o]').on('change', function () {
+            opts[$(this).data('o')] = this.checked;
+            if ($(this).data('o') === 'group') { try { window.localStorage.setItem('instanton.map.group', this.checked ? '1' : '0'); } catch (e) { /* ignore */ } }
+            draw();
+        });
+        $tools.find('input[type=search]').on('input', function () { opts.search = $(this).val().toLowerCase(); draw(); });
+
+        function children(byParent, id) {
+            var list = (byParent[id] || []).slice();
+            var infra = list.filter(function (n) { return !n.client; });
+            var clients = list.filter(function (n) { return n.client; });
+            if (!opts.clients) { clients = []; }
+            if (opts.search) {
+                clients = clients.filter(function (n) {
+                    return (n.label + ' ' + (n.sub || '') + ' ' + (n.mac || '') + ' ' + (n.type_label || '')).toLowerCase().indexOf(opts.search) >= 0;
+                });
+            }
+            clients.sort(function (a, b) {
+                return (a.type_label || '').localeCompare(b.type_label || '') || String(a.label).localeCompare(String(b.label), undefined, {numeric: true});
+            });
+            if (opts.group && !opts.search) {
+                var byType = {}, order = [];
+                $.each(clients, function (_, c) {
+                    if (!byType[c.type]) { byType[c.type] = []; order.push(c.type); }
+                    byType[c.type].push(c);
+                });
+                clients = [];
+                $.each(order, function (_, t) {
+                    var members = byType[t];
+                    var gid = id + '|' + t;
+                    if (members.length < 3 || expanded[gid]) {
+                        if (members.length >= 3) {
+                            clients.push({id: gid, group: true, open: true, icon: 'minus-square-o', label: 'hide ' + members.length + ' ' + (members[0].type_label || t).toLowerCase(),
+                                type: t, link: members[0].link, client: true});
+                        }
+                        clients = clients.concat(members);
+                    } else {
+                        var wireless = members.filter(function (m) { return m.link && m.link.kind === 'wireless'; }).length;
+                        clients.push({id: gid, group: true, icon: members[0].icon, type: t, client: true,
+                            label: members.length + ' × ' + (members[0].type_label || t),
+                            sub: wireless === members.length ? 'Wi-Fi' : (wireless ? wireless + ' on Wi-Fi' : 'cable'),
+                            link: {kind: wireless === members.length ? 'wireless' : 'wired', up: true},
+                            title: $.map(members, function (m) { return m.label; }).join('\n')});
+                    }
+                });
+            }
+            return infra.concat(clients);
+        }
+
+        function layout() {
+            var byParent = {}, root = null;
+            $.each(nodes, function (_, n) {
+                if (!n.parent) { root = n; } else { (byParent[n.parent] = byParent[n.parent] || []).push(n); }
+            });
+            var placed = [], leaf = 0, maxDepth = 0;
+            function place(n, depth) {
+                maxDepth = Math.max(maxDepth, depth);
+                var kids = children(byParent, n.id);
+                var item = {n: n, depth: depth, kids: []};
+                if (!kids.length) {
+                    item.y = leaf++;
+                } else {
+                    $.each(kids, function (_, k) { item.kids.push(place(k, depth + 1)); });
+                    item.y = (item.kids[0].y + item.kids[item.kids.length - 1].y) / 2;
+                }
+                placed.push(item);
+                return item;
+            }
+            if (root) { place(root, 0); }
+            return {items: placed, rows: Math.max(leaf, 1), depth: maxDepth};
+        }
+
+        function linkClass(l) {
+            if (!l) { return 'lk-unknown'; }
+            if (l.kind === 'wired' && l.up === false) { return 'lk-down'; }
+            return 'lk-' + (l.kind || 'unknown');
+        }
+
+        function linkText(n) {
+            var l = n.link || {};
+            if (n.client) { return ''; }
+            var parts = [l.text || ''];
+            if (l.speed) { parts.push(l.speed); }
+            if (l.poe_w) { parts.push(l.poe_w + ' W'); }
+            if (l.snr !== null && l.snr !== undefined) { parts.push(l.snr + ' dB'); }
+            return parts.filter(Boolean).join(' · ');
+        }
+
+        function draw() {
+            if (!nodes.length) { $canvas.html('<p class="text-muted">No data yet.</p>'); return; }
+            var L = layout();
+            var W = (L.depth + 1) * MAP.colW + MAP.pad * 2, H = L.rows * MAP.rowH + MAP.pad * 2;
+            var pos = function (it) { return {x: MAP.pad + it.depth * MAP.colW, y: MAP.pad + it.y * MAP.rowH + MAP.rowH / 2}; };
+            var paths = '', labels = '', boxes = '';
+            $.each(L.items, function (_, it) {
+                var p = pos(it);
+                $.each(it.kids, function (_, k) {
+                    var c = pos(k);
+                    var x1 = p.x + MAP.nodeW, x2 = c.x, mx = (x1 + x2) / 2;
+                    paths += '<path class="' + linkClass(k.n.link) + '" d="M' + x1 + ',' + p.y + ' C' + mx + ',' + p.y + ' ' + mx + ',' + c.y +
+                        ' ' + x2 + ',' + c.y + '"><title>' + esc(linkText(k.n) || (k.n.link || {}).text || '') + '</title></path>';
+                    var t = linkText(k.n);
+                    if (t) {
+                        labels += '<text x="' + (x2 - 6) + '" y="' + (c.y - 7) + '" text-anchor="end">' + esc(t) + '</text>';
+                    }
+                });
+                var n = it.n;
+                var cls = 'map-node map-' + (n.client ? 'client' : n.type) + (n.online === false ? ' map-offline' : '') +
+                    (n.group ? ' map-group' : '') + (n.unmanaged ? ' map-unmanaged' : '');
+                var tip = n.title || [n.label, n.type_label || n.type, n.sub, n.mac, (n.link || {}).text].filter(Boolean).join('\n');
+                var inner = '<span class="map-icon">' + icon(n.icon || 'circle-o') + '</span><span class="map-text"><span class="map-label">' +
+                    esc(n.label) + '</span>' + (n.sub ? '<span class="map-sub">' + esc(n.sub) + '</span>' : '') + '</span>' +
+                    (n.clients ? '<span class="badge map-count" title="Clients">' + esc(n.clients) + '</span>' : '');
+                var style = 'left:' + p.x + 'px;top:' + (p.y - 16) + 'px;width:' + MAP.nodeW + 'px';
+                if (n.group) {
+                    boxes += '<div class="' + cls + '" style="' + style + '" data-group="' + esc(n.id) + '" title="' + esc(tip) + '" role="button" tabindex="0">' + inner + '</div>';
+                } else if (n.href) {
+                    boxes += '<a class="' + cls + '" style="' + style + '" href="' + esc(n.href) + '" title="' + esc(tip) + '">' + inner + '</a>';
+                } else {
+                    boxes += '<div class="' + cls + '" style="' + style + '" title="' + esc(tip) + '">' + inner + '</div>';
+                }
+            });
+            $canvas.html('<div class="map-inner" style="width:' + W + 'px;height:' + H + 'px"><svg width="' + W + '" height="' + H + '">' +
+                '<g class="map-links">' + paths + '</g><g class="map-link-labels">' + labels + '</g></svg>' + boxes + '</div>');
+            $canvas.find('[data-group]').on('click keypress', function () {
+                var gid = $(this).data('group');
+                expanded[gid] = !expanded[gid];
+                draw();
+            });
+        }
+
+        page.render = function (data) {
+            if (!$canvas.parent().length) { page.$content.html(section('Network map', '')).find('.instanton-section-body').append($canvas); }
+            nodes = data.nodes || [];
+            draw();
+        };
+        page.reload();
+    }
+
     window.InstantOn = {
         esc: esc, api: api, duration: duration, ago: ago, datetime: datetime, bytes: bytes, bps: bps,
         frontPanel: frontPanel, helpPanel: helpPanel, settingsHelp: settingsHelp, showTestResult: showTestResult,
+        cloudSites: cloudSites,
         pages: {overview: overview, 'switch': switchPage, accesspoints: accessPointsPage, clients: clientsPage, events: eventsPage,
-                configuration: configurationPage}
+                configuration: configurationPage, map: mapPage}
     };
 }(window, jQuery));

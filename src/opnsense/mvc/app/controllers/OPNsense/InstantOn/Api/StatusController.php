@@ -36,8 +36,14 @@ use OPNsense\Core\Backend;
  */
 class StatusController extends ApiControllerBase
 {
-    private function view($name)
+    private function view($name, $switch = '')
     {
+        if ($switch !== '' && $switch !== null) {
+            if (!preg_match('/^[A-Za-z0-9-]{1,64}$/', $switch)) {
+                return ['error' => 'invalid switch id'];
+            }
+            $name .= ':' . $switch;
+        }
         $this->sessionClose();
         $response = (new Backend())->configdpRun('instanton view', [$name]);
         $data = json_decode($response, true);
@@ -52,14 +58,14 @@ class StatusController extends ApiControllerBase
         return $this->view('summary');
     }
 
-    public function switchAction()
+    public function switchAction($id = '')
     {
-        return $this->view('switch');
+        return $this->view('switch', $id);
     }
 
-    public function portsAction()
+    public function portsAction($id = '')
     {
-        return $this->view('ports');
+        return $this->view('ports', $id);
     }
 
     public function apsAction()
@@ -77,13 +83,18 @@ class StatusController extends ApiControllerBase
         return $this->view('events');
     }
 
-    public function logAction()
+    public function logAction($id = '')
     {
-        return $this->view('log');
+        return $this->view('log', $id);
     }
 
     public function insightsAction()
     {
         return $this->view('insights');
+    }
+
+    public function topologyAction()
+    {
+        return $this->view('topology');
     }
 }

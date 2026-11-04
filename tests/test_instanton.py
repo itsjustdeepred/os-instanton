@@ -138,7 +138,7 @@ class CollectorTest(unittest.TestCase):
         self.patches = [
             mock.patch.object(collector, 'STATE_DIR', self.state_dir),
             mock.patch('lib.config.STATE_DIR', self.state_dir),
-            mock.patch.object(collector, 'fetch_switch_raw', lambda cfg, persistent: json.loads(json.dumps(self.raw))),
+            mock.patch.object(collector, 'fetch_switch_raw', lambda dev, persistent: json.loads(json.dumps(self.raw))),
             mock.patch.object(collector.aplib, 'read_ap',
                               lambda host, port=8080: aplib.parse_debug_info(fixture('ap_debug_info.xml'))),
             mock.patch.object(collector.hostinfo, 'collect', lambda: {}),
@@ -155,7 +155,8 @@ class CollectorTest(unittest.TestCase):
 
     def test_full_run(self):
         state = collector.run(self.cfg)
-        sw = state['switch']
+        sw = state['switches'][0]
+        self.assertEqual(sw['id'], 'default')
         self.assertTrue(sw['online'])
         self.assertEqual(len(sw['ports']), 52)
         self.assertEqual(sw['ports'][0]['name'], '1/1')
@@ -183,7 +184,7 @@ class CollectorTest(unittest.TestCase):
         real_time = time.time
         with mock.patch.object(collector.time, 'time', lambda: real_time() + 60):
             state = collector.run(self.cfg)
-        p11 = next(p for p in state['switch']['ports'] if p['name'] == '1/1')
+        p11 = next(p for p in state['switches'][0]['ports'] if p['name'] == '1/1')
         self.assertIsNotNone(p11['rx_bps'])
         with open(os.path.join(self.state_dir, 'events.json')) as fh:
             events = json.load(fh)
@@ -212,7 +213,7 @@ class CollectorTest(unittest.TestCase):
             'IPAddress': '192.0.2.1', 'status': '4', 'lastResponse': '01011900 00:00:00',
             'lastRequest': time.strftime('%m%d%Y %H:%M:%S', local)}}
         state = collector.run(self.cfg)
-        sw = state['switch']
+        sw = state['switches'][0]
         self.assertLess(abs(sw['clock_skew']), 5)
         self.assertEqual(sw['timezone'], '+01:00')
         self.assertIsNone(sw['sntp_list'][0]['last_response'])
@@ -221,13 +222,140 @@ class CollectorTest(unittest.TestCase):
         self.assertIn('Time server 192.0.2.1 does not answer the switch', titles)
 
     def test_switch_failure_is_reported(self):
-        def boom(cfg, persistent):
+        def boom(dev, persistent):
             raise swlib.SwitchError('login failed: invalid username or password')
         with mock.patch.object(collector, 'fetch_switch_raw', boom):
             state = collector.run(self.cfg)
-        self.assertFalse(state['sources']['switch']['ok'])
-        self.assertIn('invalid username', state['sources']['switch']['error'])
+        self.assertFalse(state['sources']['switch:default']['ok'])
+        self.assertIn('invalid username', state['sources']['switch:default']['error'])
         self.assertFalse(state['summary']['switch_online'])
+        self.assertIn('Switch 192.0.2.2 unreachable', [i['title'] for i in state['insights']])
+
+    def test_device_types_on_clients(self):
+        state = collector.run(self.cfg)
+        types = {c.get('type') for c in state['clients']}
+        self.assertTrue(types - {'unknown'})
+        self.assertTrue(all(c.get('type_label') and c.get('type_icon') for c in state['clients']))
+
+
+SWITCH_B_MAC = '02:00:00:00:0b:0b'
+
+
+class MultiSwitchTest(unittest.TestCase):
+    """Two switches: B hangs on port 1/24 of A; one device of 1/24 really sits on B port 1/3."""
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.state_dir = os.path.join(self.tmp.name, 'state')
+        conf = os.path.join(self.tmp.name, 'instanton.conf')
+        with open(conf, 'w') as fh:
+            fh.write('[general]\nenabled=1\n'
+                     '[switch:aaaa-1]\nname=Rack\nhost=192.0.2.2\nusername=u\npassword=p\n'
+                     '[switch:bbbb-2]\nname=Garage\nhost=192.0.2.3\nusername=u\npassword=p\n'
+                     '[switch:cccc-3]\nenabled=0\nhost=192.0.2.4\nusername=u\npassword=p\n'
+                     '[aps]\nenabled=1\ndiscover=1\n')
+        self.cfg = Config(conf)
+        raw_a = json.loads(fixture('switch_raw.json'))
+        a_mac = raw_a['SystemGlobalSetting']['MACAddress']
+        fdb_a = raw_a['ForwardingTable']['Entry']
+        self.moved = next(e['MACAddress'] for e in fdb_a if e['interfaceName'] == '1/24')
+        fdb_a.append({'MACAddress': SWITCH_B_MAC, 'VLANID': '1', 'addressType': '3', 'interfaceName': '1/24',
+                      'interfaceType': '1'})
+        raw_b = json.loads(fixture('switch_raw.json'))
+        raw_b['SystemGlobalSetting'].update({'MACAddress': SWITCH_B_MAC, 'systemName': 'garage-sw'})
+        raw_b['LLDPMEDNeighborList'] = {}
+        raw_b['ForwardingTable'] = {'Entry': [
+            {'MACAddress': a_mac, 'VLANID': '1', 'addressType': '3', 'interfaceName': '1/52', 'interfaceType': '1'},
+            {'MACAddress': self.moved, 'VLANID': '1', 'addressType': '3', 'interfaceName': '1/3', 'interfaceType': '1'},
+        ]}
+        self.raws = {'192.0.2.2': raw_a, '192.0.2.3': raw_b}
+        self.patches = [
+            mock.patch.object(collector, 'STATE_DIR', self.state_dir),
+            mock.patch('lib.config.STATE_DIR', self.state_dir),
+            mock.patch.object(collector, 'fetch_switch_raw',
+                              lambda dev, persistent: json.loads(json.dumps(self.raws[dev.get('host')]))),
+            mock.patch.object(collector.aplib, 'read_ap',
+                              lambda host, port=8080: aplib.parse_debug_info(fixture('ap_debug_info.xml'))),
+            mock.patch.object(collector.hostinfo, 'collect', lambda: {}),
+            mock.patch.object(collector, 'firewall_macs', lambda: set()),
+            mock.patch.object(collector, 'log', lambda level, msg: None),
+        ]
+        for p in self.patches:
+            p.start()
+
+    def tearDown(self):
+        for p in self.patches:
+            p.stop()
+        self.tmp.cleanup()
+
+    def test_config_lists_switches(self):
+        self.assertEqual([d.id for d in self.cfg.switches()], ['aaaa-1', 'bbbb-2'])
+        self.assertEqual(len(self.cfg.switches(usable_only=False)), 3)
+        self.assertEqual(self.cfg.switch('bbbb-2').label, 'Garage')
+        self.assertIsNone(self.cfg.switch())  # ambiguous without an id
+
+    def test_link_between_switches_and_client_location(self):
+        state = collector.run(self.cfg)
+        a, b = state['switches']
+        self.assertEqual((a['label'], b['label']), ('Rack', 'Garage'))
+        port = next(p for p in a['ports'] if p['name'] == '1/24')
+        self.assertEqual((port['role'], port['peer']), ('switch', 'bbbb-2'))
+        client = next(c for c in state['clients'] if c['mac'] == self.moved)
+        self.assertEqual((client['switch'], client['port'], client['switch_name']), ('bbbb-2', '1/3', 'Garage'))
+        self.assertFalse(any(c['mac'] == SWITCH_B_MAC for c in state['clients']))
+        self.assertEqual(state['summary']['switches_online'], 2)
+        self.assertEqual(state['summary']['ports_total'], 104)
+
+    def test_topology_tree(self):
+        from lib import topology
+        state = collector.run(self.cfg)
+        nodes = {n['id']: n for n in topology.build(state, state['switches'])['nodes']}
+        self.assertEqual(nodes['sw:aaaa-1']['parent'], 'fw')
+        self.assertEqual(nodes['sw:bbbb-2']['parent'], 'sw:aaaa-1')
+        self.assertEqual(nodes['sw:bbbb-2']['link']['port'], '1/24')
+        self.assertEqual(nodes['c:' + self.moved]['parent'], 'sw:bbbb-2')
+        self.assertTrue(all(n['parent'] in nodes for n in nodes.values() if n['parent']))
+
+    def test_switch_offline_keeps_the_other(self):
+        real = collector.fetch_switch_raw
+
+        def flaky(dev, persistent):
+            if dev.get('host') == '192.0.2.3':
+                raise swlib.SwitchError('timeout')
+            return real(dev, persistent)
+        with mock.patch.object(collector, 'fetch_switch_raw', flaky):
+            state = collector.run(self.cfg)
+        self.assertEqual([s['online'] for s in state['switches']], [True, False])
+        self.assertIn('Switch Garage unreachable', [i['title'] for i in state['insights']])
+
+
+class CloudAndTypesTest(unittest.TestCase):
+    def test_site_selection(self):
+        from lib import cloud
+        client = cloud.InstantOnCloud('u', 'p')
+        with mock.patch.object(client, 'sites', lambda: [{'id': 'S1', 'name': 'Home'}, {'id': 'S2', 'name': 'Office'}]):
+            self.assertEqual([s['id'] for s in client.select_sites([])], ['S1', 'S2'])
+            self.assertEqual([s['id'] for s in client.select_sites(['office'])], ['S2'])
+            with self.assertRaises(cloud.CloudError):
+                client.select_sites(['Shop'])
+
+    def test_network_never_keeps_passphrase(self):
+        from lib import cloud
+        net = cloud.normalize_network({'networkName': 'Home', 'preSharedKey': 'secret', 'useVlan': True, 'vlanId': 20,
+                                       'isAvailableOn5GHzRadioBand': True})
+        self.assertNotIn('secret', json.dumps(net))
+        self.assertEqual((net['vlan'], net['bands']), (20, ['5 GHz']))
+
+    def test_device_type_guesses(self):
+        from lib import devicetype as dt
+        self.assertEqual(dt.classify(['Shelly-Washer'])['type'], 'iot')
+        self.assertEqual(dt.classify(['Telecamera Garden'], 'Hangzhou Hikvision')['type'], 'camera')
+        self.assertEqual(dt.classify(['Citofono'], 'Hangzhou Hikvision')['type'], 'intercom')
+        self.assertEqual(dt.classify([''], 'Synology Incorporated')['type'], 'nas')
+        self.assertEqual(dt.classify(['00:11:22:33:44:55'], '', ['Brother', 'Printer'])['type'], 'printer')
+        self.assertEqual(dt.classify(['Tab-S9'], '')['type'], 'tablet')
+        r = dt.classify([], '')
+        self.assertEqual((r['type'], r['type_source']), ('unknown', ''))
 
 
 class ActionsTest(unittest.TestCase):
@@ -237,6 +365,15 @@ class ActionsTest(unittest.TestCase):
              'poe': {'enabled': True, 'status': 'delivering'}},
             {'name': '1/51', 'description': 'OPNsense', 'enabled': True, 'role': 'uplink', 'poe': None},
         ], 'sntp_list': [{'address': '192.0.2.9'}]}}
+
+    def test_link_to_other_switch_is_protected(self):
+        state = {'switch': {'ports': [{'name': '1/24', 'enabled': True, 'role': 'switch', 'peer': 'bbbb-2',
+                                       'poe': {'enabled': True, 'status': 'searching'}}]}}
+        for action, params in (('port', {'port': '1/24', 'enabled': False}), ('poe', {'port': '1/24', 'enabled': False}),
+                               ('poe_cycle', {'port': '1/24'}), ('cable_test', {'port': '1/24', 'confirm': True})):
+            with self.assertRaisesRegex(actions.ActionError, 'another monitored switch'):
+                actions.plan(action, params, state)
+        self.assertEqual(actions.uplink_ports(state), {'1/24'})
 
     def test_build_section(self):
         xml = swlib.build_section('Standard802_3List', 'set', {'Entry': {'interfaceName': '1/1',

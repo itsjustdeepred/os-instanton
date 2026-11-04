@@ -12,7 +12,7 @@
     </page-services-instanton>
     <page-services-instanton-change>
         <name>Services: Instant On: change switch</name>
-        <description>Change the configuration of the Instant On switch</description>
+        <description>Change the configuration of the Instant On switches</description>
         <patterns>
             <pattern>api/instanton/config/*</pattern>
         </patterns>

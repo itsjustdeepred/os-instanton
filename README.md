@@ -8,13 +8,14 @@ switch configuration. By default it only reads.
 
 | Page | Content |
 |---|---|
-| **Overview** | Status cards, health checks, recent events, switch front panel, access point list |
-| **Switch** | Device and health data (temperature, fans, PSU, PoE budget, clock, unsaved config, web sessions), front panel, every port with link, role, LLDP neighbour, VLANs, PoE, throughput, totals, learned MACs, errors and link flaps, VLAN table, switch log with level filter |
-| **Access Points** | Model, IP, uplink port/speed/PoE, wireless clients, firmware, serial, coordinator, cloud status, clock check, last restart reason (crashes highlighted); cloud inventory with radios when the cloud source is on |
-| **Clients** | Every learned device with name, IP, MAC/vendor, private-MAC detection, access point or port, VLAN, first/last seen, signal (cloud); filters and CSV export |
+| **Overview** | Status cards, health checks, recent events, a front panel per switch, access point list |
+| **Switch** | One tab per switch: device and health data (temperature, fans, PSU, PoE budget, clock, unsaved config, web sessions), front panel, every port with link, role, LLDP neighbour, VLANs, PoE, throughput, totals, learned MACs, errors and link flaps, VLAN table, switch log with level filter |
+| **Access Points** | Model, IP, uplink switch/port/speed/PoE, wireless clients, firmware, serial, coordinator, cloud status, clock check, last restart reason (crashes highlighted); with a cloud account also the cloud inventory (health, mesh uplink and its signal, radios) and the Wi-Fi networks (SSID, security, VLAN, bands, clients) |
+| **Clients** | Every learned device with its kind (camera, phone, printer, smart home, ...), name, IP, MAC/vendor, private-MAC detection, access point or switch and port, VLAN, first/last seen, SSID and signal (cloud); filters and CSV export |
+| **Network Map** | Tree from the firewall to switches, access points (mesh links included) and clients, with port, speed, PoE and signal on every link; clients grouped by kind |
 | **Events** | Port up/down, access point offline/restart/firmware/coordinator changes, new devices, PoE faults, polling failures; also sent to syslog |
-| **Configuration** | Every switch configuration section, grouped like the switch menus, with common tasks (name, time and time server, remote syslog, save, locator LED, restart) and a generic editor |
-| **Settings** | Sources, credentials, polling, thresholds, change permission, with field help, service control and a connection test |
+| **Configuration** | For each switch, every configuration section, grouped like the switch menus, with common tasks (name, time and time server, remote syslog, save, locator LED, restart) and a generic editor |
+| **Settings** | List of switches, list of cloud accounts with site selection, access points, polling, thresholds, change permission, with field help, service control and a connection test |
 | **Dashboard widget** | Switch, access points, clients, PoE and open problems |
 
 ### Health checks
@@ -57,6 +58,24 @@ Access points take their configuration from the Instant On cloud and have
 no local configuration interface; they can be power-cycled through their
 PoE port.
 
+## Several switches and cloud accounts
+
+Any number of switches and Instant On cloud accounts can be added in
+Settings. Each switch has its own credentials, uplink ports and save option;
+each cloud account reads all of its sites or the ones ticked in the site
+list. Links between monitored switches are found from LLDP and from the
+switch MAC addresses in the forwarding tables. A device is placed on the
+edge port where it is learned, not on the links between switches. Links
+towards the firewall and between monitored switches are protected from
+changes like the uplink of a single switch.
+
+## Device kind
+
+Each client gets a kind (`type`) guessed from, in order: its name
+(firewall static mapping, DHCP host name, port description, cloud name),
+the cloud fingerprint, LLDP capabilities, and the manufacturer of the MAC
+address. The source of the guess is shown in the tooltip of the Type column.
+
 ## Data sources
 
 * **Switch (local management)** – Instant On 1930/1960 web API
@@ -73,8 +92,9 @@ PoE port.
 * **Cloud (optional, experimental)** – the undocumented Instant On portal
   API (OAuth2 + PKCE, `x-ion-api-version: 7`) for SSIDs, signal, band and
   health of wireless clients, radios and alerts. Accounts with two-factor
-  authentication are not supported. This source has not been tested against
-  a live account yet.
+  authentication are not supported. Tested read-only against a live account
+  with one site. The API also returns Wi-Fi passphrases; the plugin never
+  stores them.
 
 Wireless client details (SSID, signal, band) are not available locally on
 Instant On access points; without the cloud source a client is "wireless"
@@ -90,8 +110,8 @@ on a running firewall, copy this repository to it and run as root:
 sh install.sh
 ```
 
-Then open **Services > Instant On > Settings**, enter the switch address
-and an account of its web interface, press **Test connection**, tick
+Then open **Services > Instant On > Settings**, add the switches (address
+and an account of their web interface) and optionally the cloud accounts, press **Test connection**, tick
 **Enable monitor** and press **Apply**. `uninstall.sh` removes the files
 and the collected data (settings stay in `config.xml`).
 
@@ -104,23 +124,26 @@ and the collected data (settings stay in `config.xml`).
 | `/var/db/instanton/state.json` | Latest snapshot |
 | `/var/db/instanton/clients.json` | Device history (first/last seen) |
 | `/var/db/instanton/events.json` | Event history |
-| `/var/db/instanton/config.json` | Switch configuration sections read for the Configuration page |
+| `/var/db/instanton/config-<switch id>.json` | Switch configuration sections read for the Configuration page |
 | `/var/log/instanton/` | Syslog output (Services > Instant On > Log File) |
 
 configd actions: `instanton start|stop|restart|status|refresh|test`,
-`instanton view <summary|switch|ports|aps|clients|events|log|insights|all>`,
-`instanton readconfig <group|Section|all|cached>`,
-`instanton configure <base64url JSON request>`.
+`instanton view <summary|switch|ports|aps|clients|events|log|insights|topology|all>[:<switch id>]`,
+`instanton readconfig [<switch id>:]<group|Section|all|cached>`,
+`instanton configure <base64url JSON request>`, `instanton cloudsites <account id>`.
 
 API:
 
 ```
-GET  /api/instanton/status/{summary,switch,ports,aps,clients,events,log,insights}
+GET  /api/instanton/status/{summary,aps,clients,events,insights,topology}
+GET  /api/instanton/status/{switch,ports,log}/<switch id>
 GET  /api/instanton/settings/get        POST /api/instanton/settings/set
+     /api/instanton/settings/{search,get,add,set,del,toggle}{Switch,Account}
 POST /api/instanton/service/{start,stop,restart,reconfigure,refresh,test}
+POST /api/instanton/service/cloudsites/<account id>
 GET  /api/instanton/service/status
-GET  /api/instanton/config/read/cached   POST /api/instanton/config/read/{group|Section|all}
-POST /api/instanton/config/apply         request={"action": ..., "params": {...}}
+GET  /api/instanton/config/read/<switch id>/cached   POST /api/instanton/config/read/<switch id>/{group|Section|all}
+POST /api/instanton/config/apply         request={"switch": <id>, "action": ..., "params": {...}}
 ```
 
 Actions: `port`, `poe`, `poe_cycle`, `system`, `time`, `syslog`, `locate`,

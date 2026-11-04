@@ -2,7 +2,9 @@
 """
 Apply one configuration change to the switch.
 
-usage: configure.py <base64url JSON {"action": ..., "params": {...}}>
+usage: configure.py <base64url JSON {"switch": <id>, "action": ..., "params": {...}}>
+
+"switch" may be left out when only one switch is configured.
 
 Changes are refused unless "Allow changes" is enabled in the settings.
 The result is printed as JSON; the change is written to the event history
@@ -23,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from lib import actions  # noqa: E402
 from lib import catalog  # noqa: E402
 from lib import switch as swlib  # noqa: E402
-from lib.collector import load_json, log, save_json  # noqa: E402
+from lib.collector import load_json, log, save_json, switch_list  # noqa: E402
 from lib.config import Config  # noqa: E402
 
 PIDFILE = os.environ.get('INSTANTON_PIDFILE', '/var/run/instanton.pid')
@@ -36,7 +38,7 @@ def decode(arg):
         raise actions.ActionError('malformed request')
     if not isinstance(data, dict) or not isinstance(data.get('params', {}), dict):
         raise actions.ActionError('malformed request')
-    return data.get('action'), data.get('params') or {}
+    return str(data.get('switch') or ''), data.get('action'), data.get('params') or {}
 
 
 def record(cfg, level, message):
@@ -54,24 +56,34 @@ def poke_monitor():
         return False
 
 
+def config_cache(ident):
+    return 'config-%s.json' % ident
+
+
 def main():
     cfg = Config()
+    label = 'switch'
     try:
         if len(sys.argv) < 2:
             raise actions.ActionError('no request')
-        action, params = decode(sys.argv[1])
+        ident, action, params = decode(sys.argv[1])
         if not cfg.flag('general', 'allow_changes'):
             raise actions.ActionError('changes are disabled; enable "Allow changes" in Services > Instant On > Settings')
-        if not (cfg.flag('switch', 'enabled') and cfg.get('switch', 'host')):
-            raise actions.ActionError('the switch is not configured')
-        state = load_json('state.json', {})
-        config = load_json('config.json', {})
+        dev = cfg.switch(ident or None)
+        if dev is None:
+            raise actions.ActionError('unknown switch' if ident or cfg.switches() else 'no switch is configured')
+        label = dev.label
+        # the protections need the state of this switch (ports towards the firewall, time zone)
+        sw_state = next((s for s in switch_list(load_json('state.json', {})) if s.get('id') == dev.id), {})
+        state = {'switch': sw_state}
+        cache_name = config_cache(dev.id)
+        config = load_json(cache_name, {})
         changes, _ = actions.plan(action, params, state, config)  # validate before logging in
-        client = swlib.InstantOnSwitch(cfg.get('switch', 'host'), cfg.get('switch', 'username'),
-                                       cfg.get('switch', 'password'), verify_tls=cfg.flag('switch', 'verify_tls'))
+        client = swlib.InstantOnSwitch(dev.get('host'), dev.get('username'), dev.get('password'),
+                                       verify_tls=dev.flag('verify_tls'))
         client.login()
         try:
-            result = actions.execute(client, action, params, state, save=cfg.flag('switch', 'save_after_change'),
+            result = actions.execute(client, action, params, state, save=dev.flag('save_after_change'),
                                      config=config)
             # keep the editor's copy of the changed sections current
             touched = [s for s in dict.fromkeys(c[0] for c in changes) if s in catalog.SECTIONS]
@@ -80,10 +92,10 @@ def main():
                     fresh = {}
                     for name in touched:
                         fresh.update(client.fetch(name))
-                    cache = load_json('config.json', {})
+                    cache = load_json(cache_name, {})
                     cache.setdefault('sections', {}).update(fresh)
                     cache.setdefault('read_at', {}).update({n: time.time() for n in fresh})
-                    save_json('config.json', cache)
+                    save_json(cache_name, cache)
                 except swlib.SwitchError:
                     pass
         finally:
@@ -91,10 +103,12 @@ def main():
     except (actions.ActionError, swlib.SwitchError) as exc:
         message = str(exc)
         if isinstance(exc, swlib.SwitchError):
-            record(cfg, 'error', 'Change refused by the switch: %s' % message)
+            record(cfg, 'error', 'Change refused by switch %s: %s' % (label, message))
         print(json.dumps({'status': 'error', 'message': message}))
         return 0
-    record(cfg, 'info', result['message'] + (' (not saved to startup configuration)' if result['saved'] is False else ''))
+    multi = len(cfg.switches()) > 1
+    record(cfg, 'info', ('%s: ' % label if multi else '') + result['message'] +
+           (' (not saved to startup configuration)' if result['saved'] is False else ''))
     result['refresh'] = 'monitor' if poke_monitor() else 'manual'
     print(json.dumps(result))
     return 0

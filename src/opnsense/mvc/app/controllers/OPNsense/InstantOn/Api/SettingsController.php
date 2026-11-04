@@ -34,4 +34,68 @@ class SettingsController extends ApiMutableModelControllerBase
 {
     protected static $internalModelName = 'instanton';
     protected static $internalModelClass = 'OPNsense\InstantOn\InstantOn';
+
+    /* switches */
+
+    public function searchSwitchAction()
+    {
+        return $this->searchBase('switches.switch', ['enabled', 'name', 'host', 'username', 'uplink_ports'], 'name');
+    }
+
+    public function getSwitchAction($uuid = null)
+    {
+        return $this->getBase('switch', 'switches.switch', $uuid);
+    }
+
+    public function addSwitchAction()
+    {
+        return $this->addBase('switch', 'switches.switch');
+    }
+
+    public function setSwitchAction($uuid)
+    {
+        return $this->setBase('switch', 'switches.switch', $uuid);
+    }
+
+    public function delSwitchAction($uuid)
+    {
+        return $this->delBase('switches.switch', $uuid);
+    }
+
+    public function toggleSwitchAction($uuid, $enabled = null)
+    {
+        return $this->toggleBase('switches.switch', $uuid, $enabled);
+    }
+
+    /* cloud accounts */
+
+    public function searchAccountAction()
+    {
+        return $this->searchBase('clouds.account', ['enabled', 'name', 'username', 'sites'], 'name');
+    }
+
+    public function getAccountAction($uuid = null)
+    {
+        return $this->getBase('account', 'clouds.account', $uuid);
+    }
+
+    public function addAccountAction()
+    {
+        return $this->addBase('account', 'clouds.account');
+    }
+
+    public function setAccountAction($uuid)
+    {
+        return $this->setBase('account', 'clouds.account', $uuid);
+    }
+
+    public function delAccountAction($uuid)
+    {
+        return $this->delBase('clouds.account', $uuid);
+    }
+
+    public function toggleAccountAction($uuid, $enabled = null)
+    {
+        return $this->toggleBase('clouds.account', $uuid, $enabled);
+    }
 }

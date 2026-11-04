@@ -1,0 +1,52 @@
+<form>
+    <field>
+        <id>switch.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Read this switch. Untick to keep its settings without polling it.</help>
+    </field>
+    <field>
+        <id>switch.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>Shown in the plugin pages, for example "Rack" or "Garage". Leave empty to use the name configured on the switch.</help>
+    </field>
+    <field>
+        <id>switch.host</id>
+        <label>Address</label>
+        <type>text</type>
+        <help>IP address or host name of the switch, for example 10.0.1.2. HTTPS is used. The switch must be in local management mode (its own web login page is reachable); cloud-managed switches have no local login and are read through a cloud account instead.</help>
+    </field>
+    <field>
+        <id>switch.username</id>
+        <label>User name</label>
+        <type>text</type>
+        <help>An account of the switch web interface. Read access is enough for monitoring; changes need an administrator account. A dedicated account makes the plugin sessions easy to recognise in the switch log.</help>
+    </field>
+    <field>
+        <id>switch.password</id>
+        <label>Password</label>
+        <type>password</type>
+        <help>Stored in the firewall configuration and in a file readable only by root. It is sent to the switch RSA-encrypted, the same way its web interface does.</help>
+    </field>
+    <field>
+        <id>switch.verify_tls</id>
+        <label>Verify certificate</label>
+        <type>checkbox</type>
+        <advanced>true</advanced>
+        <help>Check the HTTPS certificate of the switch. Leave it off for the factory self-signed certificate.</help>
+    </field>
+    <field>
+        <id>switch.uplink_ports</id>
+        <label>Uplink ports</label>
+        <type>text</type>
+        <advanced>true</advanced>
+        <help>Ports of this switch that lead towards the firewall, for example 1/51. Addresses learned on them are not listed as clients, and they are protected from changes (they cannot be switched off or reconfigured from the plugin). Leave empty for automatic detection: the port where the firewall's own MAC address is seen, or whose description mentions OPNsense, firewall, router, gateway or uplink. Links between monitored switches are found automatically.</help>
+    </field>
+    <field>
+        <id>switch.save_after_change</id>
+        <label>Save after each change</label>
+        <type>checkbox</type>
+        <help>Copy the running configuration to the startup configuration after every change, so it survives a restart of the switch. Untick to test changes first: they are lost at the next restart unless you press "Save configuration" on the Configuration page.</help>
+    </field>
+</form>

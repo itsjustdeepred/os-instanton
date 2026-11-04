@@ -63,3 +63,46 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .instanton-modal .modal-lg .modal-body { max-height: 65vh; overflow-y: auto; }
 .instanton-modal .instanton-confirm { margin: 10px 0 0; }
 .instanton-port-tools .btn { margin: 0 4px 4px 0; }
+
+/* switch selector */
+.instanton-switch-pills { margin: 0 0 10px; }
+.instanton-switch-pills > li > a { padding: 5px 12px; }
+.instanton-grid-box { padding: 10px 15px; }
+.instanton-grid-box h3 { margin-top: 5px; }
+
+/* network map */
+.instanton-map-tools { margin-bottom: 8px; }
+.instanton-map-tools .checkbox-inline { margin-right: 10px; }
+.instanton-map-legend { margin-left: 12px; white-space: nowrap; }
+.instanton-map-legend .lk { display: inline-block; width: 22px; height: 0; border-top: 2px solid; vertical-align: middle; margin: 0 3px 0 8px; }
+.instanton-map { overflow: auto; max-height: 80vh; background: rgba(127, 127, 127, 0.04); border-radius: 4px; }
+.instanton-map .map-inner { position: relative; }
+.instanton-map svg { position: absolute; left: 0; top: 0; }
+.instanton-map path { fill: none; stroke-width: 2; }
+.instanton-map .map-link-labels text { font-size: 10px; fill: #777; }
+.lk-wired { stroke: #5b9b4a; border-color: #5b9b4a !important; }
+.lk-wireless { stroke: #3a87ad; stroke-dasharray: 5 4; border-color: #3a87ad !important; border-top-style: dashed !important; }
+.lk-mesh { stroke: #e08a1e; stroke-dasharray: 8 4; stroke-width: 3 !important; border-color: #e08a1e !important; border-top-style: dashed !important; }
+.lk-unknown { stroke: #aaa; stroke-dasharray: 2 4; border-color: #aaa !important; border-top-style: dotted !important; }
+.lk-down { stroke: #d9534f; border-color: #d9534f !important; }
+.instanton-map .map-node {
+    position: absolute; height: 32px; display: flex; align-items: center; gap: 6px; padding: 0 8px;
+    border: 1px solid rgba(127, 127, 127, 0.35); border-radius: 6px; background: rgba(127, 127, 127, 0.07); color: inherit;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08); overflow: hidden; text-decoration: none; cursor: pointer;
+}
+.instanton-map a.map-node:hover, .instanton-map .map-group:hover { border-color: #3a87ad; text-decoration: none; }
+.instanton-map .map-icon { width: 18px; text-align: center; flex: none; color: #666; }
+.instanton-map .map-text { display: flex; flex-direction: column; min-width: 0; line-height: 1.15; }
+.instanton-map .map-label { font-size: 12px; font-weight: 600; color: inherit; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.instanton-map .map-sub { font-size: 10px; color: #888; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.instanton-map .map-count { margin-left: auto; flex: none; }
+.instanton-map .map-firewall { border-color: #d9534f; }
+.instanton-map .map-firewall .map-icon { color: #d9534f; }
+.instanton-map .map-switch { border-color: #5b9b4a; }
+.instanton-map .map-switch .map-icon { color: #5b9b4a; }
+.instanton-map .map-ap { border-color: #3a87ad; }
+.instanton-map .map-ap .map-icon { color: #3a87ad; }
+.instanton-map .map-unmanaged { border-style: dashed; opacity: 0.8; }
+.instanton-map .map-group { background: rgba(58, 135, 173, 0.07); border-style: dashed; }
+.instanton-map .map-offline { border-color: #d9534f; background: rgba(217, 83, 79, 0.08); }
+.instanton-map .map-offline .map-label { text-decoration: line-through; }

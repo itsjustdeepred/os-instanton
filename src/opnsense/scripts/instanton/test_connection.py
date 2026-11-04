@@ -19,18 +19,20 @@ from lib.config import Config  # noqa: E402
 def main():
     cfg = Config()
     result = {}
-    if cfg.flag('switch', 'enabled') and cfg.get('switch', 'host'):
+    for dev in cfg.switches():
+        key = 'switch:' + dev.id
         try:
-            client = swlib.InstantOnSwitch(cfg.get('switch', 'host'), cfg.get('switch', 'username'),
-                                           cfg.get('switch', 'password'), verify_tls=cfg.flag('switch', 'verify_tls'))
+            client = swlib.InstantOnSwitch(dev.get('host'), dev.get('username'), dev.get('password'),
+                                           verify_tls=dev.flag('verify_tls'))
             with client:
                 info = client.fetch('SystemGlobalSetting').get('SystemGlobalSetting', {})
-            result['switch'] = {'ok': True, 'message': '%s, firmware %s' % (
-                info.get('systemDescription', '').split(',')[0], info.get('firmwareVersion', ''))}
+            result[key] = {'ok': True, 'label': 'Switch %s' % dev.label, 'message': '%s "%s", firmware %s' % (
+                info.get('systemDescription', '').split(',')[0], info.get('systemName', ''),
+                info.get('firmwareVersion', ''))}
         except swlib.SwitchError as exc:
-            result['switch'] = {'ok': False, 'message': str(exc)}
-    else:
-        result['switch'] = {'ok': None, 'message': 'not configured'}
+            result[key] = {'ok': False, 'label': 'Switch %s' % dev.label, 'message': str(exc)}
+    if not cfg.switches():
+        result['switch'] = {'ok': None, 'label': 'Switches', 'message': 'none configured'}
     hosts = cfg.list('aps', 'hosts')
     if cfg.flag('aps', 'enabled') and hosts:
         msgs, ok = [], True
@@ -41,16 +43,21 @@ def main():
             except aplib.APError as exc:
                 ok = False
                 msgs.append(str(exc))
-        result['aps'] = {'ok': ok, 'message': '; '.join(msgs)}
+        result['aps'] = {'ok': ok, 'label': 'Access points', 'message': '; '.join(msgs)}
     elif cfg.flag('aps', 'enabled') and cfg.flag('aps', 'discover'):
-        result['aps'] = {'ok': None, 'message': 'access points are discovered through the switch (LLDP)'}
-    if cfg.flag('cloud', 'enabled') and cfg.get('cloud', 'username'):
+        result['aps'] = {'ok': None, 'label': 'Access points',
+                         'message': 'access points are discovered through the switches (LLDP)'}
+    for acc in cfg.clouds():
+        key = 'cloud:' + acc.id
         try:
-            client = cloudlib.InstantOnCloud(cfg.get('cloud', 'username'), cfg.get('cloud', 'password'))
+            client = cloudlib.InstantOnCloud(acc.get('username'), acc.get('password'))
             sites = client.sites()
-            result['cloud'] = {'ok': True, 'message': 'sites: %s' % ', '.join(str(s.get('name')) for s in sites)}
+            chosen = client.select_sites(acc.list('sites')) if acc.list('sites') else sites
+            names = {s.get('id') for s in chosen}
+            result[key] = {'ok': True, 'label': 'Cloud %s' % acc.label, 'message': 'sites: %s' % ', '.join(
+                '%s%s' % (s.get('name'), '' if s.get('id') in names else ' (not selected)') for s in sites)}
         except cloudlib.CloudError as exc:
-            result['cloud'] = {'ok': False, 'message': str(exc)}
+            result[key] = {'ok': False, 'label': 'Cloud %s' % acc.label, 'message': str(exc)}
     print(json.dumps(result))
     return 0
 

@@ -1,6 +1,6 @@
 <model>
     <mount>//OPNsense/instanton</mount>
-    <version>1.1.0</version>
+    <version>2.0.0</version>
     <description>HPE Networking Instant On monitor</description>
     <items>
         <general>
@@ -41,35 +41,44 @@
                 <Required>Y</Required>
             </allow_changes>
         </general>
-        <switch>
-            <enabled type="BooleanField">
-                <Default>1</Default>
-                <Required>Y</Required>
-            </enabled>
-            <host type="HostnameField">
-                <IpAllowed>Y</IpAllowed>
-                <ValidationMessage>Enter the IP address or host name of the switch.</ValidationMessage>
-            </host>
-            <username type="TextField">
-                <Mask>/^[^\s]{1,64}$/</Mask>
-                <ValidationMessage>The user name cannot contain spaces.</ValidationMessage>
-            </username>
-            <password type="TextField">
-                <Mask>/^[^\n\r]{0,128}$/</Mask>
-            </password>
-            <verify_tls type="BooleanField">
-                <Default>0</Default>
-                <Required>Y</Required>
-            </verify_tls>
-            <uplink_ports type="TextField">
-                <Mask>/^([0-9]+\/[0-9]+)?([ ,]+[0-9]+\/[0-9]+)*$/</Mask>
-                <ValidationMessage>Use switch port names such as 1/51, separated by commas.</ValidationMessage>
-            </uplink_ports>
-            <save_after_change type="BooleanField">
-                <Default>1</Default>
-                <Required>Y</Required>
-            </save_after_change>
-        </switch>
+        <switches>
+            <switch type="ArrayField">
+                <enabled type="BooleanField">
+                    <Default>1</Default>
+                    <Required>Y</Required>
+                </enabled>
+                <name type="TextField">
+                    <Mask>/^[^\n\r]{0,64}$/</Mask>
+                    <ValidationMessage>Up to 64 characters.</ValidationMessage>
+                </name>
+                <host type="HostnameField">
+                    <IpAllowed>Y</IpAllowed>
+                    <Required>Y</Required>
+                    <ValidationMessage>Enter the IP address or host name of the switch.</ValidationMessage>
+                </host>
+                <username type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[^\s]{1,64}$/</Mask>
+                    <ValidationMessage>The user name cannot contain spaces.</ValidationMessage>
+                </username>
+                <password type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[^\n\r]{1,128}$/</Mask>
+                </password>
+                <verify_tls type="BooleanField">
+                    <Default>0</Default>
+                    <Required>Y</Required>
+                </verify_tls>
+                <uplink_ports type="TextField">
+                    <Mask>/^([0-9]+\/[0-9]+)?([ ,]+[0-9]+\/[0-9]+)*$/</Mask>
+                    <ValidationMessage>Use switch port names such as 1/51, separated by commas.</ValidationMessage>
+                </uplink_ports>
+                <save_after_change type="BooleanField">
+                    <Default>1</Default>
+                    <Required>Y</Required>
+                </save_after_change>
+            </switch>
+        </switches>
         <aps>
             <enabled type="BooleanField">
                 <Default>1</Default>
@@ -88,21 +97,29 @@
                 <Required>Y</Required>
             </port>
         </aps>
-        <cloud>
-            <enabled type="BooleanField">
-                <Default>0</Default>
-                <Required>Y</Required>
-            </enabled>
-            <username type="TextField">
-                <Mask>/^[^\s]{0,128}$/</Mask>
-                <ValidationMessage>Enter the e-mail address of the Instant On account.</ValidationMessage>
-            </username>
-            <password type="TextField">
-                <Mask>/^[^\n\r]{0,128}$/</Mask>
-            </password>
-            <site type="TextField">
-                <Mask>/^[^\n\r]{0,128}$/</Mask>
-            </site>
-        </cloud>
+        <clouds>
+            <account type="ArrayField">
+                <enabled type="BooleanField">
+                    <Default>1</Default>
+                    <Required>Y</Required>
+                </enabled>
+                <name type="TextField">
+                    <Mask>/^[^\n\r]{0,64}$/</Mask>
+                    <ValidationMessage>Up to 64 characters.</ValidationMessage>
+                </name>
+                <username type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[^\s]{1,128}$/</Mask>
+                    <ValidationMessage>Enter the e-mail address of the Instant On account.</ValidationMessage>
+                </username>
+                <password type="TextField">
+                    <Required>Y</Required>
+                    <Mask>/^[^\n\r]{1,128}$/</Mask>
+                </password>
+                <sites type="CSVListField">
+                    <Mask>/^[^\n\r]{0,1024}$/</Mask>
+                </sites>
+            </account>
+        </clouds>
     </items>
 </model>

@@ -23,6 +23,7 @@ from datetime import datetime
 from . import actions
 from . import ap as aplib
 from . import cloud as cloudlib
+from . import devicetype
 from . import hostinfo
 from . import switch as swlib
 from .config import Config, STATE_DIR, state_path
@@ -186,15 +187,24 @@ def _switch_fetch(client):
     return raw
 
 
-def fetch_switch_raw(cfg, persistent):
-    host = cfg.get('switch', 'host')
-    key = (host, cfg.get('switch', 'username'), cfg.get('switch', 'password'), cfg.flag('switch', 'verify_tls'))
+def session_key(dev):
+    return (dev.get('host'), dev.get('username'), dev.get('password'), dev.flag('verify_tls'))
+
+
+def drop_stale_sessions(devices):
+    """Log out of switches that were removed from the settings or changed credentials."""
+    keep = {session_key(d) for d in devices}
+    for stale in [k for k in _sessions if k not in keep]:
+        _sessions.pop(stale).logout()
+
+
+def fetch_switch_raw(dev, persistent):
+    key = session_key(dev)
+    host = key[0]
     if not persistent:
         client = swlib.InstantOnSwitch(host, key[1], key[2], verify_tls=key[3])
         with client:
             return _switch_fetch(client)
-    for stale in [k for k in _sessions if k != key]:
-        _sessions.pop(stale).logout()
     client = _sessions.get(key)
     if client is not None and client.logged_in:
         try:
@@ -212,10 +222,10 @@ def fetch_switch_raw(cfg, persistent):
         raise
 
 
-def collect_switch(cfg, previous, persistent=False):
-    host = cfg.get('switch', 'host')
+def collect_switch(cfg, dev, previous_switch, persistent=False):
+    host = dev.get('host')
     started = time.time()
-    raw = fetch_switch_raw(cfg, persistent)
+    raw = fetch_switch_raw(dev, persistent)
     now = time.time()
     sysinfo = raw.get('SystemGlobalSetting', {}) or {}
     diag = (swlib.section_entries(raw.get('DiagnosticsUnitList')) or [{}])[0]
@@ -283,8 +293,8 @@ def collect_switch(cfg, previous, persistent=False):
             flaps[port_name] = flaps.get(port_name, 0) + 1
     log_entries.sort(key=lambda x: (x['time'] or 0, x['seq']), reverse=True)
 
-    prev_ports = {p['name']: p for p in (previous.get('switch') or {}).get('ports', [])}
-    prev_time = (previous.get('switch') or {}).get('polled_at') or 0
+    prev_ports = {p['name']: p for p in (previous_switch or {}).get('ports', [])}
+    prev_time = (previous_switch or {}).get('polled_at') or 0
     elapsed = now - prev_time if prev_time else 0
 
     ports = []
@@ -348,6 +358,7 @@ def collect_switch(cfg, previous, persistent=False):
     modules = [{'port': i.get('entityName'), 'type': i.get('PID', '').strip(), 'description': i.get('description', ''),
                 'serial': i.get('serialNumber', '').strip()} for i in inventory if i.get('entityType') == '1']
     return {
+        'id': dev.id, 'label': dev.get('name') or sysinfo.get('systemName', '') or host,
         'online': True, 'host': host, 'polled_at': now, 'poll_ms': int((now - started) * 1000),
         'name': sysinfo.get('systemName', ''), 'model': model or sysinfo.get('systemDescription', ''),
         'description': sysinfo.get('systemDescription', ''), 'serial': sysinfo.get('serialNumber', ''),
@@ -384,34 +395,34 @@ def collect_switch(cfg, previous, persistent=False):
         'modules': modules,
         'ports': ports,
         'fdb': fdb,
-        'log': log_entries[:cfg.int('switch', 'log_entries')],
+        'log': log_entries[:cfg.int('general', 'log_entries')],
     }
 
 
 # --------------------------------------------------------------------------
 # access points
 # --------------------------------------------------------------------------
-def collect_aps(cfg, switch, hosts):
+def collect_aps(cfg, switches, hosts):
     targets = {}
     for h in cfg.list('aps', 'hosts'):
         targets[h] = {'source': 'manual'}
-    by_mac = {}
-    if cfg.flag('aps', 'discover') and switch:
-        for port in switch.get('ports', []):
-            n = port.get('neighbor')
-            if n and n.get('is_ap'):
-                ip = n.get('ip') or hosts.get(n.get('mac'), {}).get('ip', '')
-                key = ip or n.get('mac')
-                targets.setdefault(key, {'source': 'lldp'})
-                targets[key].update({'port': port['name'], 'lldp_name': n.get('name'), 'mac': n.get('mac'),
-                                     'poe_w': (port.get('poe') or {}).get('power_w'), 'speed': port.get('speed'),
-                                     'duplex': port.get('duplex')})
-                if n.get('mac'):
-                    by_mac[n['mac']] = key
+    if cfg.flag('aps', 'discover'):
+        for sw in switches:
+            for port in sw.get('ports', []):
+                n = port.get('neighbor')
+                if n and n.get('is_ap'):
+                    ip = n.get('ip') or hosts.get(n.get('mac'), {}).get('ip', '')
+                    key = ip or n.get('mac')
+                    targets.setdefault(key, {'source': 'lldp'})
+                    targets[key].update({'port': port['name'], 'switch': sw['id'], 'switch_name': sw.get('label', ''),
+                                         'lldp_name': n.get('name'), 'mac': n.get('mac'),
+                                         'poe_w': (port.get('poe') or {}).get('power_w'), 'speed': port.get('speed'),
+                                         'duplex': port.get('duplex')})
     aps = []
     port = cfg.int('aps', 'port')
     for host, meta in targets.items():
         rec = {'host': host, 'source': meta.get('source'), 'port': meta.get('port', ''),
+               'switch': meta.get('switch', ''), 'switch_name': meta.get('switch_name', ''),
                'name': meta.get('lldp_name', ''), 'mac': meta.get('mac', ''), 'poe_w': meta.get('poe_w'),
                'speed': meta.get('speed'), 'duplex': meta.get('duplex'), 'online': False, 'error': '',
                'wired': bool(meta.get('port'))}
@@ -445,17 +456,33 @@ def collect_aps(cfg, switch, hosts):
 # --------------------------------------------------------------------------
 # correlation
 # --------------------------------------------------------------------------
-def classify_ports(cfg, switch, own_macs):
-    """Return {port: role} where role is ap / uplink / device / empty."""
+def classify_ports(dev, switch, own_macs, switch_macs=()):
+    """Set p['role'] on every port and return {port: role}.
+
+    Roles: uplink (towards the firewall), ap, switch (another switch, monitored
+    or not), device, empty. ``switch_macs`` maps the MAC addresses of the other
+    monitored switches to their id, so links between them are recognised even
+    without LLDP.
+    """
     roles = {}
-    manual_uplinks = set(cfg.list('switch', 'uplink_ports'))
+    manual_uplinks = set(dev.list('uplink_ports')) if dev else set()
     own_ports = {e['port'] for e in switch.get('fdb', []) if e['mac'] in own_macs}
+    peer_ports = {}
+    for e in switch.get('fdb', []):
+        if e['mac'] in switch_macs and switch_macs[e['mac']] != switch.get('id'):
+            peer_ports.setdefault(e['port'], switch_macs[e['mac']])
     for p in switch.get('ports', []):
         n = p.get('neighbor') or {}
+        peer = switch_macs.get(n.get('mac')) if n.get('mac') else None
+        if peer == switch.get('id'):
+            peer = None
+        p['peer'] = peer or (peer_ports.get(p['name']) if p['name'] not in own_ports else None) or ''
         if p['name'] in manual_uplinks or p['name'] in own_ports:
             roles[p['name']] = 'uplink'
         elif n.get('is_ap'):
             roles[p['name']] = 'ap'
+        elif p['peer']:
+            roles[p['name']] = 'switch'
         elif not n and UPLINK_HINT.search(p.get('description', '')) and p['mac_count'] > 1:
             roles[p['name']] = 'uplink'
         elif n:
@@ -468,47 +495,81 @@ def classify_ports(cfg, switch, own_macs):
     return roles
 
 
-def build_clients(switch, aps, hosts, cloud, roles, known, now):
-    ap_by_port = {a['port']: a for a in aps if a.get('port')}
-    # a wired port with a single learned address and a description names that device
-    port_label = {p['name']: p['description'] for p in (switch or {}).get('ports', [])
-                  if p.get('description') and p.get('mac_count') == 1 and p.get('role') == 'device'}
-    infra_macs = {a.get('mac') for a in aps if a.get('mac')}
+def type_info(kind):
+    kind = kind if kind in devicetype.TYPES else 'unknown'
+    return (kind,) + devicetype.TYPES[kind]
+
+
+def build_clients(switches, aps, hosts, cloud, known, now):
+    """Correlate the MAC tables of every switch with the host data and the cloud.
+
+    A MAC address is seen on every switch between the device and the firewall;
+    the device sits on the port that is not a link to another switch (an edge
+    port). Addresses learned only on links to unmonitored switches stay on that
+    link.
+    """
+    ap_by_port = {(a.get('switch'), a['port']): a for a in aps if a.get('port')}
+    infra_macs = ({a.get('mac') for a in aps if a.get('mac')} | {sw.get('mac') for sw in switches if sw.get('mac')} |
+                  {d.get('mac') for d in (cloud or {}).get('devices', []) if d.get('mac')})
     cloud_clients = {c['mac']: c for c in (cloud or {}).get('clients', []) if c.get('mac')}
+    cloud_aps = {d.get('mac'): d.get('name') for d in (cloud or {}).get('devices', []) if d.get('mac')}
+    ap_by_mac = dict(cloud_aps, **{a['mac']: a['name'] for a in aps if a.get('mac')})
+    multi = len(switches) > 1
+    rank = {'device': 0, 'empty': 0, 'ap': 1, 'switch': 2}
+    best = {}
+    for sw in switches:
+        ports = {p['name']: p for p in sw.get('ports', [])}
+        # a wired port with a single learned address and a description names that device
+        for e in sw.get('fdb', []):
+            p = ports.get(e['port'], {})
+            role = p.get('role', 'device')
+            if role == 'uplink' or e['mac'] in infra_macs:
+                continue
+            r = rank.get(role, 0)
+            if e['mac'] not in best or r < best[e['mac']][0]:
+                best[e['mac']] = (r, sw, e, p)
     current = {}
-    for e in (switch or {}).get('fdb', []):
-        role = roles.get(e['port'], 'device')
-        if role == 'uplink' or e['mac'] in infra_macs or e['mac'] == (switch or {}).get('mac'):
-            continue
-        h = hosts.get(e['mac'], {})
-        ap = ap_by_port.get(e['port'])
+    for mac, (_, sw, e, p) in best.items():
+        role = p.get('role', 'device')
+        h = hosts.get(mac, {})
+        ap = ap_by_port.get((sw['id'], e['port']))
+        label = p.get('description', '') if (p.get('mac_count') == 1 and role == 'device') else ''
         rec = {
-            'mac': e['mac'], 'vlan': e['vlan'], 'port': e['port'],
+            'mac': mac, 'vlan': e['vlan'], 'port': e['port'], 'switch': sw['id'],
+            'switch_name': sw.get('label', '') if multi else '',
             'connection': 'wireless' if role == 'ap' else 'wired',
             'ap': ap['name'] if ap else '', 'ip': h.get('ip', ''), 'hostname': h.get('hostname', ''),
             'description': h.get('description', ''), 'lease': h.get('source', ''),
-            'port_label': port_label.get(e['port'], ''),
-            'vendor': hostinfo.vendor(e['mac']), 'random_mac': hostinfo.is_random_mac(e['mac']),
-            'online': True,
+            'port_label': label, 'vendor': hostinfo.vendor(mac), 'random_mac': hostinfo.is_random_mac(mac),
+            'online': True, 'neighbor': p.get('neighbor') if p.get('mac_count') == 1 else None,
         }
-        cc = cloud_clients.get(e['mac'])
+        cc = cloud_clients.get(mac)
         if cc:
             rec.update({'ssid': cc.get('ssid'), 'signal': cc.get('signal'), 'band': cc.get('band'),
                         'snr': cc.get('snr'), 'signal_quality': cc.get('signal_quality'),
-                        'ap': cc.get('ap') or rec['ap'], 'health': cc.get('health'),
+                        'ap': ap_by_mac.get(cc.get('ap_mac')) or cc.get('ap') or rec['ap'], 'health': cc.get('health'), 'site': cc.get('site'),
+                        'cloud_name': cc.get('name', ''), 'classification': cc.get('classification') or [],
                         'hostname': rec['hostname'] or cc.get('name', '')})
-        current[e['mac']] = rec
-    # wireless clients reported only by the cloud (e.g. behind a mesh AP)
+            if cc.get('type') == 'wireless':
+                rec['connection'] = 'wireless'
+        current[mac] = rec
+    # clients reported only by the cloud (behind a mesh AP, or on a switch that is not monitored)
     for mac, cc in cloud_clients.items():
-        if mac not in current:
+        if mac not in current and mac not in infra_macs:
             h = hosts.get(mac, {})
-            current[mac] = {'mac': mac, 'vlan': None, 'port': '', 'connection': cc.get('type') or 'wireless',
-                            'ap': cc.get('ap', ''), 'ip': cc.get('ip') or h.get('ip', ''),
+            current[mac] = {'mac': mac, 'vlan': None, 'port': '', 'switch': '', 'switch_name': '',
+                            'connection': cc.get('type') or 'wireless',
+                            'ap': ap_by_mac.get(cc.get('ap_mac')) or cc.get('ap', ''), 'ip': cc.get('ip') or h.get('ip', ''),
                             'hostname': h.get('hostname') or cc.get('name', ''), 'description': h.get('description', ''),
                             'lease': h.get('source', ''), 'vendor': hostinfo.vendor(mac),
                             'random_mac': hostinfo.is_random_mac(mac), 'online': True, 'ssid': cc.get('ssid'),
                             'signal': cc.get('signal'), 'band': cc.get('band'), 'health': cc.get('health'),
-                            'snr': cc.get('snr'), 'signal_quality': cc.get('signal_quality')}
+                            'snr': cc.get('snr'), 'signal_quality': cc.get('signal_quality'), 'site': cc.get('site'),
+                            'cloud_name': cc.get('name', ''), 'classification': cc.get('classification') or []}
+    for rec in current.values():
+        rec.update(devicetype.classify((rec.get('description'), rec.get('hostname'), rec.get('port_label'),
+                                        rec.get('cloud_name')), rec.get('vendor'), rec.get('classification'),
+                                       rec.pop('neighbor', None)))
     events = []
     for mac, rec in current.items():
         k = known.get(mac)
@@ -516,11 +577,14 @@ def build_clients(switch, aps, hosts, cloud, roles, known, now):
             known[mac] = k = {'first_seen': now}
             events.append(('info', 'client', 'New device %s%s on %s' % (
                 mac, ' (%s)' % (rec['hostname'] or rec['vendor']) if (rec['hostname'] or rec['vendor']) else '',
-                rec['ap'] and 'AP %s' % rec['ap'] or 'port %s' % rec['port'])))
-        elif k.get('port') and rec['port'] and k['port'] != rec['port'] and rec['connection'] == 'wireless' \
-                and k.get('connection') == 'wireless':
-            rec['roamed_from'] = k.get('ap') or k['port']
-        k.update({'last_seen': now, 'port': rec['port'], 'ap': rec['ap'], 'connection': rec['connection'],
+                rec['ap'] and 'AP %s' % rec['ap'] or 'port %s%s' % (
+                    rec['port'], ' on %s' % rec['switch_name'] if rec.get('switch_name') else ''))))
+        elif rec['connection'] == 'wireless' and k.get('connection') == 'wireless' and k.get('ap') \
+                and rec.get('ap') and k['ap'] != rec['ap']:
+            rec['roamed_from'] = k['ap']
+        k.update({'last_seen': now, 'port': rec['port'], 'switch': rec.get('switch', ''),
+                  'switch_name': rec.get('switch_name', ''), 'type': rec.get('type', ''),
+                  'ap': rec['ap'], 'connection': rec['connection'],
                   'ip': rec['ip'] or k.get('ip', ''), 'hostname': rec['hostname'] or k.get('hostname', ''),
                   'vlan': rec['vlan'], 'vendor': rec['vendor'],
                   'port_label': rec.get('port_label') or k.get('port_label', '')})
@@ -529,7 +593,10 @@ def build_clients(switch, aps, hosts, cloud, roles, known, now):
     offline = []
     for mac, k in known.items():
         if mac not in current:
+            t = type_info(k.get('type'))
             offline.append({'mac': mac, 'vlan': k.get('vlan'), 'port': k.get('port', ''),
+                            'switch': k.get('switch', ''), 'switch_name': k.get('switch_name', ''),
+                            'type': t[0], 'type_label': t[1], 'type_icon': t[2], 'type_source': 'history',
                             'connection': k.get('connection', ''), 'ap': k.get('ap', ''),
                             'ip': hosts.get(mac, {}).get('ip') or k.get('ip', ''),
                             'hostname': hosts.get(mac, {}).get('hostname') or k.get('hostname', ''),
@@ -544,65 +611,76 @@ def build_clients(switch, aps, hosts, cloud, roles, known, now):
 # --------------------------------------------------------------------------
 # health checks
 # --------------------------------------------------------------------------
-def insights(cfg, switch, aps, clients, cloud=None):
+def _switch_insights(cfg, switch, add):
+    """Checks of one switch."""
+    skew = switch.get('clock_skew')
+    if skew is not None and abs(skew) > cfg.int('general', 'clock_skew_seconds'):
+        add('warning', 'switch', 'Switch clock is wrong',
+            'The switch clock differs from the firewall by %s. Log timestamps are unreliable. '
+            'Configure an SNTP server (e.g. the firewall) on the switch.' % human_duration(abs(skew)))
+    servers = switch.get('sntp_list') or []
+    if not servers:
+        add('warning', 'switch', 'No time server configured on the switch',
+            'SNTP has no unicast server. Point it to the firewall so logs and events line up.')
+    elif switch.get('time_mode') == 'sntp' and not any(s.get('last_response') for s in servers) \
+            and any(s.get('last_request') for s in servers):
+        add('warning', 'switch', 'Time server %s does not answer the switch' % ', '.join(s['address'] for s in servers),
+            'The switch sends SNTP requests but never got a reply. If the server is this firewall: in '
+            'Services > Network Time > General select the interface of the switch network under Interfaces '
+            '(or none, to listen everywhere), and allow UDP port 123 to the firewall on that interface.')
+    if not switch.get('config_saved'):
+        add('warning', 'switch', 'Running configuration not saved',
+            'The switch has unsaved changes that will be lost on reboot.')
+    if switch.get('unexpected_restart'):
+        add('warning', 'switch', 'Unexpected switch restart', 'The switch reports an unexpected restart.')
+    if not switch.get('temperature_ok'):
+        add('critical', 'switch', 'Switch temperature alarm', 'Sensor reads %s °C.' % switch.get('temperature'))
+    for fan in switch.get('fans', []):
+        if fan['status'] != 'ok':
+            add('critical', 'switch', 'Fan %d %s' % (fan['id'], fan['status']), 'Check the switch ventilation.')
+    if switch.get('psu') not in ('', 'ok'):
+        add('critical', 'switch', 'Power supply %s' % switch['psu'], 'Main power supply reports a problem.')
+    poe = switch.get('poe') or {}
+    if poe.get('percent', 0) >= cfg.int('general', 'poe_warn_percent'):
+        add('warning', 'poe', 'PoE budget at %s%%' % poe['percent'],
+            '%s W used of %s W.' % (poe.get('used_w'), poe.get('nominal_w')))
+    flap_limit = cfg.int('general', 'flap_threshold')
+    flapping = [p for p in switch.get('ports', []) if p.get('flaps', 0) >= flap_limit]
+    if flapping:
+        add('warning', 'ports', 'Ports going up and down',
+            ', '.join('%s%s (%d times)' % (p['name'], ' "%s"' % p['description'] if p['description'] else '',
+                                           p['flaps'])
+                      for p in sorted(flapping, key=lambda x: -x['flaps'])[:10]) +
+            '. Counted from link-down messages in the switch log; check cables and connected devices.')
+    for p in switch.get('ports', []):
+        if p.get('up') and p.get('errors'):
+            add('warning', 'ports', 'Errors on port %s' % p['name'],
+                '%d packet errors since the counters were cleared.' % p['errors'])
+        if p.get('up') and p.get('duplex') == 'half':
+            add('warning', 'ports', 'Half duplex on port %s' % p['name'], 'Possible auto-negotiation problem.')
+        if p.get('role') == 'ap' and p.get('up') and p.get('speed') and p['speed'] < 1000:
+            add('warning', 'ports', 'Access point on port %s linked at %d Mb/s' % (p['name'], p['speed']),
+                'Access points should link at 1 Gb/s or more; check the cable.')
+        pe = p.get('poe') or {}
+        if pe.get('status') == 'fault' or pe.get('shorts') or pe.get('overloads'):
+            add('warning', 'poe', 'PoE problem on port %s' % p['name'],
+                'status %s, overloads %s, shorts %s' % (pe.get('status'), pe.get('overloads'), pe.get('shorts')))
+
+
+def insights(cfg, switches, aps, clients, cloud=None):
     out = []
 
     def add(level, area, title, detail):
         out.append({'level': level, 'area': area, 'title': title, 'detail': detail})
 
-    if switch and switch.get('online'):
-        skew = switch.get('clock_skew')
-        if skew is not None and abs(skew) > cfg.int('general', 'clock_skew_seconds'):
-            add('warning', 'switch', 'Switch clock is wrong',
-                'The switch clock differs from the firewall by %s. Log timestamps are unreliable. '
-                'Configure an SNTP server (e.g. the firewall) on the switch.' % human_duration(abs(skew)))
-        servers = switch.get('sntp_list') or []
-        if not servers:
-            add('warning', 'switch', 'No time server configured on the switch',
-                'SNTP has no unicast server. Point it to the firewall so logs and events line up.')
-        elif switch.get('time_mode') == 'sntp' and not any(s.get('last_response') for s in servers) \
-                and any(s.get('last_request') for s in servers):
-            add('warning', 'switch', 'Time server %s does not answer the switch' % ', '.join(s['address'] for s in servers),
-                'The switch sends SNTP requests but never got a reply. If the server is this firewall: in '
-                'Services > Network Time > General select the interface of the switch network under Interfaces '
-                '(or none, to listen everywhere), and allow UDP port 123 to the firewall on that interface.')
-        if not switch.get('config_saved'):
-            add('warning', 'switch', 'Running configuration not saved',
-                'The switch has unsaved changes that will be lost on reboot.')
-        if switch.get('unexpected_restart'):
-            add('warning', 'switch', 'Unexpected switch restart', 'The switch reports an unexpected restart.')
-        if not switch.get('temperature_ok'):
-            add('critical', 'switch', 'Switch temperature alarm', 'Sensor reads %s °C.' % switch.get('temperature'))
-        for fan in switch.get('fans', []):
-            if fan['status'] != 'ok':
-                add('critical', 'switch', 'Fan %d %s' % (fan['id'], fan['status']), 'Check the switch ventilation.')
-        if switch.get('psu') not in ('', 'ok'):
-            add('critical', 'switch', 'Power supply %s' % switch['psu'], 'Main power supply reports a problem.')
-        poe = switch.get('poe') or {}
-        if poe.get('percent', 0) >= cfg.int('general', 'poe_warn_percent'):
-            add('warning', 'poe', 'PoE budget at %s%%' % poe['percent'],
-                '%s W used of %s W.' % (poe.get('used_w'), poe.get('nominal_w')))
-        flap_limit = cfg.int('general', 'flap_threshold')
-        flapping = [p for p in switch.get('ports', []) if p.get('flaps', 0) >= flap_limit]
-        if flapping:
-            add('warning', 'ports', 'Ports going up and down',
-                ', '.join('%s%s (%d times)' % (p['name'], ' "%s"' % p['description'] if p['description'] else '',
-                                               p['flaps'])
-                          for p in sorted(flapping, key=lambda x: -x['flaps'])[:10]) +
-                '. Counted from link-down messages in the switch log; check cables and connected devices.')
-        for p in switch.get('ports', []):
-            if p.get('up') and p.get('errors'):
-                add('warning', 'ports', 'Errors on port %s' % p['name'],
-                    '%d packet errors since the counters were cleared.' % p['errors'])
-            if p.get('up') and p.get('duplex') == 'half':
-                add('warning', 'ports', 'Half duplex on port %s' % p['name'], 'Possible auto-negotiation problem.')
-            if p.get('role') == 'ap' and p.get('up') and p.get('speed') and p['speed'] < 1000:
-                add('warning', 'ports', 'Access point on port %s linked at %d Mb/s' % (p['name'], p['speed']),
-                    'Access points should link at 1 Gb/s or more; check the cable.')
-            pe = p.get('poe') or {}
-            if pe.get('status') == 'fault' or pe.get('shorts') or pe.get('overloads'):
-                add('warning', 'poe', 'PoE problem on port %s' % p['name'],
-                    'status %s, overloads %s, shorts %s' % (pe.get('status'), pe.get('overloads'), pe.get('shorts')))
+    multi = len(switches) > 1
+    for switch in switches:
+        if not switch.get('online'):
+            add('critical', 'switch', 'Switch %s unreachable' % switch.get('label', switch.get('host')),
+                switch.get('error', ''))
+            continue
+        prefix = '%s: ' % switch.get('label') if multi else ''
+        _switch_insights(cfg, switch, lambda level, area, title, detail, p=prefix: add(level, area, p + title, detail))
     for a in aps:
         if not a.get('online'):
             add('critical', 'aps', 'Access point %s unreachable' % a['name'], a.get('error', ''))
@@ -612,7 +690,7 @@ def insights(cfg, switch, aps, clients, cloud=None):
         if a.get('cloud_status') and a['cloud_status'].upper() != 'CONNECTED':
             add('info', 'aps', '%s not connected to the cloud' % a['name'], a.get('cloud_reason') or a['cloud_status'])
         if not a.get('wired'):
-            add('info', 'aps', '%s has no wired link on the monitored switch' % a['name'],
+            add('info', 'aps', '%s has no wired link on a monitored switch' % a['name'],
                 'It is meshed or connected elsewhere; its wireless clients appear behind its uplink AP.')
     for d in (cloud or {}).get('devices', []):
         weak = d.get('mesh_parent') and (d.get('mesh_quality') in ('poor', 'fair')
@@ -665,27 +743,52 @@ def human_duration(seconds):
 # --------------------------------------------------------------------------
 # change detection
 # --------------------------------------------------------------------------
+def switch_list(state):
+    """Switches of a state snapshot (also reads the single-switch format of version 1)."""
+    if state.get('switches') is not None:
+        return state['switches']
+    sw = state.get('switch')
+    return [dict(sw, id=sw.get('id', 'default'), label=sw.get('label') or sw.get('name') or sw.get('host', ''))] \
+        if sw else []
+
+
 def diff_events(previous, state):
     ev = []
-    psw, sw = previous.get('switch') or {}, state.get('switch') or {}
-    if psw.get('online') and sw.get('online'):
+    old_switches = {s.get('id'): s for s in switch_list(previous)}
+    new_switches = switch_list(state)
+    multi = len(new_switches) > 1
+    for sw in new_switches:
+        psw = old_switches.get(sw.get('id')) or {}
+        name = sw.get('label') or sw.get('host', '')
+        at = (' on %s' % name) if multi else ''
+        if psw.get('online') and not sw.get('online'):
+            ev.append(('error', 'switch', 'Switch %s unreachable: %s' % (name, sw.get('error', ''))))
+        elif psw and not psw.get('online') and sw.get('online'):
+            ev.append(('info', 'switch', 'Switch %s reachable again' % name))
+        if not (psw.get('online') and sw.get('online')):
+            continue
         if sw.get('uptime', 0) + 120 < psw.get('uptime', 0):
-            ev.append(('warning', 'switch', 'Switch restarted (uptime %s)' % human_duration(sw['uptime'])))
+            ev.append(('warning', 'switch', 'Switch %srestarted (uptime %s)' % (name + ' ' if multi else '',
+                                                                                 human_duration(sw['uptime']))))
+        if psw.get('firmware') and sw.get('firmware') and psw['firmware'] != sw['firmware']:
+            ev.append(('info', 'switch', 'Switch %s firmware %s -> %s' % (name, psw['firmware'], sw['firmware'])))
         pports = {p['name']: p for p in psw.get('ports', [])}
         for p in sw.get('ports', []):
             old = pports.get(p['name'])
             if not old:
                 continue
-            label = p['name'] + (' "%s"' % p['description'] if p['description'] else '')
+            label = p['name'] + (' "%s"' % p['description'] if p['description'] else '') + at
             if old['up'] and not p['up']:
-                ev.append(('warning' if p.get('role') in ('ap', 'uplink') else 'info', 'port', 'Port %s down' % label))
+                ev.append(('warning' if p.get('role') in ('ap', 'uplink', 'switch') else 'info', 'port',
+                           'Port %s down' % label))
             elif not old['up'] and p['up']:
                 ev.append(('info', 'port', 'Port %s up at %s Mb/s %s duplex' % (label, p['speed'], p['duplex'])))
             op, np_ = (old.get('poe') or {}).get('status'), (p.get('poe') or {}).get('status')
             if op and np_ and op != np_ and 'fault' in (op, np_):
                 ev.append(('warning', 'poe', 'PoE on port %s: %s -> %s' % (label, op, np_)))
         if psw.get('temperature_ok', True) and not sw.get('temperature_ok', True):
-            ev.append(('error', 'switch', 'Switch temperature alarm (%s C)' % sw.get('temperature')))
+            ev.append(('error', 'switch', 'Switch %stemperature alarm (%s C)' % (name + ' ' if multi else '',
+                                                                                sw.get('temperature'))))
     pa = {a['host']: a for a in previous.get('aps', [])}
     for a in state.get('aps', []):
         old = pa.get(a['host'])
@@ -705,12 +808,15 @@ def diff_events(previous, state):
                 ev.append(('info', 'ap', 'Access point %s cloud status: %s' % (a['name'], a.get('cloud_status'))))
             if old.get('master') != a.get('master') and a.get('master'):
                 ev.append(('info', 'ap', 'Access point %s is now the swarm coordinator' % a['name']))
-    for src in ('switch', 'cloud'):
-        was, now = (previous.get('sources') or {}).get(src, {}), (state.get('sources') or {}).get(src, {})
+    for key, now in (state.get('sources') or {}).items():
+        if not key.startswith('cloud'):
+            continue  # switches have their own events above; host and AP sources have none
+        was = (previous.get('sources') or {}).get(key, {})
+        name = now.get('label') or 'Cloud'
         if was.get('ok') and now.get('enabled') and not now.get('ok'):
-            ev.append(('error', src, '%s polling failed: %s' % (src.capitalize(), now.get('error'))))
+            ev.append(('error', 'cloud', 'Cloud %s polling failed: %s' % (name, now.get('error'))))
         elif was.get('enabled') and not was.get('ok') and now.get('ok'):
-            ev.append(('info', src, '%s polling recovered' % src.capitalize()))
+            ev.append(('info', 'cloud', 'Cloud %s polling recovered' % name))
     return ev
 
 
@@ -723,31 +829,44 @@ def run(cfg=None, persistent=False):
     previous = load_json('state.json', {})
     known = load_json('clients.json', {})
     events = load_json('events.json', [])
-    state = {'generated': now, 'hostname': socket.gethostname(), 'sources': {}, 'version': 1}
+    state = {'generated': now, 'hostname': socket.gethostname(), 'sources': {}, 'version': 2}
     started = time.time()
 
     hosts = hostinfo.collect()
     state['sources']['host'] = {'enabled': True, 'ok': True, 'detail': ', '.join(hostinfo.available_sources()),
                                 'entries': len(hosts)}
 
-    switch = None
-    if cfg.flag('switch', 'enabled') and cfg.get('switch', 'host'):
+    previous_switches = {sw.get('id'): sw for sw in switch_list(previous)}
+    devices = cfg.switches()
+    if persistent:
+        drop_stale_sessions(devices)
+    switches = []
+    for dev in devices:
         try:
-            switch = collect_switch(cfg, previous, persistent)
-            state['sources']['switch'] = {'enabled': True, 'ok': True, 'ms': switch['poll_ms']}
+            sw = collect_switch(cfg, dev, previous_switches.get(dev.id), persistent)
+            state['sources']['switch:' + dev.id] = {'enabled': True, 'ok': True, 'ms': sw['poll_ms'],
+                                                    'label': sw['label'], 'kind': 'switch'}
         except (swlib.SwitchError, OSError, ValueError) as exc:
-            state['sources']['switch'] = {'enabled': True, 'ok': False, 'error': str(exc)}
-            log(syslog.LOG_ERR, 'switch %s: %s' % (cfg.get('switch', 'host'), exc))
-            switch = {'online': False, 'host': cfg.get('switch', 'host'), 'error': str(exc), 'ports': [], 'fdb': []}
-    else:
-        state['sources']['switch'] = {'enabled': False, 'ok': False}
-    state['switch'] = switch
+            state['sources']['switch:' + dev.id] = {'enabled': True, 'ok': False, 'error': str(exc),
+                                                    'label': dev.label, 'kind': 'switch'}
+            log(syslog.LOG_ERR, 'switch %s: %s' % (dev.label, exc))
+            old = previous_switches.get(dev.id) or {}
+            sw = {'id': dev.id, 'label': dev.get('name') or old.get('label') or dev.get('host'), 'online': False,
+                  'host': dev.get('host'), 'error': str(exc), 'ports': [], 'fdb': [],
+                  'model': old.get('model', ''), 'mac': old.get('mac', '')}
+        switches.append(sw)
+    state['switches'] = switches
+    online_switches = [sw for sw in switches if sw.get('online')]
 
-    roles = classify_ports(cfg, switch, firewall_macs()) if switch and switch.get('online') else {}
+    own_macs = firewall_macs()
+    switch_macs = {sw['mac']: sw['id'] for sw in switches if sw.get('mac')}
+    by_id = {d.id: d for d in devices}
+    for sw in online_switches:
+        classify_ports(by_id.get(sw['id']), sw, own_macs, switch_macs)
 
     aps = []
     if cfg.flag('aps', 'enabled'):
-        aps, swarm = collect_aps(cfg, switch if switch and switch.get('online') else None, hosts)
+        aps, swarm = collect_aps(cfg, online_switches, hosts)
         state['swarm_size'] = swarm
         state['sources']['aps'] = {'enabled': True, 'ok': all(a['online'] for a in aps) if aps else True,
                                    'entries': len(aps), 'online': sum(1 for a in aps if a['online'])}
@@ -756,20 +875,31 @@ def run(cfg=None, persistent=False):
     state['aps'] = aps
 
     cloud = None
-    if cfg.flag('cloud', 'enabled') and cfg.get('cloud', 'username'):
+    for acc in cfg.clouds():
+        key = 'cloud:' + acc.id
         try:
-            cloud = cloudlib.InstantOnCloud(cfg.get('cloud', 'username'), cfg.get('cloud', 'password'),
-                                            cfg.get('cloud', 'site') or None).collect()
-            state['sources']['cloud'] = {'enabled': True, 'ok': True, 'site': cloud['site'].get('name')}
+            data = cloudlib.InstantOnCloud(acc.get('username'), acc.get('password')).collect(acc.list('sites'))
+            for item in data['sites']:
+                item['account'] = acc.label
+            state['sources'][key] = {'enabled': True, 'ok': True, 'label': acc.label, 'kind': 'cloud',
+                                     'sites': [x.get('name') for x in data['sites']]}
+            if cloud is None:
+                cloud = {'sites': [], 'devices': [], 'clients': [], 'networks': [], 'alerts': []}
+            for k in cloud:
+                cloud[k].extend(data[k])
         except (cloudlib.CloudError, OSError, ValueError, KeyError) as exc:
-            state['sources']['cloud'] = {'enabled': True, 'ok': False, 'error': str(exc)}
-            log(syslog.LOG_ERR, 'cloud: %s' % exc)
-    else:
-        state['sources']['cloud'] = {'enabled': False, 'ok': False}
+            state['sources'][key] = {'enabled': True, 'ok': False, 'error': str(exc), 'label': acc.label,
+                                     'kind': 'cloud'}
+            log(syslog.LOG_ERR, 'cloud %s: %s' % (acc.label, exc))
     state['cloud'] = cloud
+    # the cloud knows the names given in the Instant On app ("AP Rack"); LLDP reports the host name ("AP-Rack")
+    cloud_names = {d.get('mac'): d.get('name') for d in (cloud or {}).get('devices', []) if d.get('mac') and d.get('name')}
+    for a in aps:
+        if cloud_names.get(a.get('mac')) and cloud_names[a['mac']] != a['name']:
+            a['local_name'] = a['name']
+            a['name'] = cloud_names[a['mac']]
 
-    clients, client_events = build_clients(switch if switch and switch.get('online') else None, aps, hosts,
-                                           cloud, roles, known, now)
+    clients, client_events = build_clients(online_switches, aps, hosts, cloud, known, now)
     # prune clients not seen within the retention period
     keep = now - cfg.int('general', 'history_days') * 86400
     known = {m: k for m, k in known.items() if (k.get('last_seen') or now) >= keep}
@@ -781,15 +911,23 @@ def run(cfg=None, persistent=False):
             per_ap[c['ap']] = per_ap.get(c['ap'], 0) + 1
     for a in aps:
         a['clients'] = per_ap.get(a['name'], 0)
-    state['insights'] = insights(cfg, switch, aps, clients, cloud)
+    for d in (cloud or {}).get('devices', []):
+        d['clients_seen'] = per_ap.get(d.get('name'), 0)
+    state['insights'] = insights(cfg, switches, aps, clients, cloud)
     online = [c for c in clients if c['online']]
+    all_ports = [p for sw in online_switches for p in sw.get('ports', [])]
+    poe_used = sum((sw.get('poe') or {}).get('used_w') or 0 for sw in online_switches)
+    poe_total = sum((sw.get('poe') or {}).get('nominal_w') or 0 for sw in online_switches)
     state['summary'] = {
-        'switch_online': bool(switch and switch.get('online')),
-        'ports_up': sum(1 for p in (switch or {}).get('ports', []) if p['up']),
-        'ports_total': len((switch or {}).get('ports', [])),
-        'poe_w': ((switch or {}).get('poe') or {}).get('used_w'),
-        'poe_percent': ((switch or {}).get('poe') or {}).get('percent'),
+        'switches_total': len(switches), 'switches_online': len(online_switches),
+        'switch_online': bool(switches) and len(online_switches) == len(switches),
+        'ports_up': sum(1 for p in all_ports if p['up']),
+        'ports_total': len(all_ports),
+        'poe_w': round(poe_used, 1) if online_switches else None,
+        'poe_nominal_w': poe_total,
+        'poe_percent': round(poe_used * 100.0 / poe_total, 1) if poe_total else None,
         'aps_online': sum(1 for a in aps if a['online']), 'aps_total': len(aps),
+        'cloud_sites': len((cloud or {}).get('sites', [])),
         'clients_online': len(online),
         'clients_wireless': sum(1 for c in online if c['connection'] == 'wireless'),
         'clients_wired': sum(1 for c in online if c['connection'] == 'wired'),
@@ -810,7 +948,7 @@ def run(cfg=None, persistent=False):
     save_json('state.json', state)
     save_json('clients.json', known)
     save_json('events.json', events)
-    log(syslog.LOG_INFO, 'poll done in %d ms: switch=%s aps=%d/%d clients=%d events=%d' % (
-        state['duration_ms'], 'ok' if state['summary']['switch_online'] else 'down',
+    log(syslog.LOG_INFO, 'poll done in %d ms: switches=%d/%d aps=%d/%d clients=%d events=%d' % (
+        state['duration_ms'], state['summary']['switches_online'], state['summary']['switches_total'],
         state['summary']['aps_online'], state['summary']['aps_total'], len(online), len(new_events)))
     return state

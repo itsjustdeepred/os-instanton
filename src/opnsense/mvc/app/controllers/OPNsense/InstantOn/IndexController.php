@@ -55,6 +55,11 @@ class IndexController extends \OPNsense\Base\IndexController
         $this->view->pick('OPNsense/InstantOn/events');
     }
 
+    public function mapAction()
+    {
+        $this->view->pick('OPNsense/InstantOn/map');
+    }
+
     public function configurationAction()
     {
         $this->view->pick('OPNsense/InstantOn/configuration');
@@ -63,6 +68,8 @@ class IndexController extends \OPNsense\Base\IndexController
     public function settingsAction()
     {
         $this->view->settingsForm = $this->getForm('settings');
+        $this->view->switchForm = $this->getForm('dialogSwitch');
+        $this->view->accountForm = $this->getForm('dialogCloud');
         $this->view->pick('OPNsense/InstantOn/settings');
     }
 }

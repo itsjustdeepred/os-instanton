@@ -67,4 +67,22 @@ class ServiceController extends ApiMutableServiceControllerBase
         return is_array($result) ? ['status' => 'ok', 'result' => $result]
             : ['status' => 'error', 'message' => $response];
     }
+
+    /**
+     * List the sites of a saved cloud account (for the site selection).
+     */
+    public function cloudsitesAction($uuid = '')
+    {
+        if (!$this->request->isPost()) {
+            return ['status' => 'error', 'message' => 'POST required'];
+        }
+        if (!preg_match('/^[A-Za-z0-9-]{1,64}$/', $uuid)) {
+            return ['status' => 'error', 'message' => 'invalid account'];
+        }
+        $this->sessionClose();
+        $backend = new Backend();
+        $backend->configdRun('template reload OPNsense/InstantOn');
+        $response = trim($backend->configdpRun('instanton cloudsites', [$uuid]));
+        return json_decode($response, true) ?? ['status' => 'error', 'message' => $response];
+    }
 }

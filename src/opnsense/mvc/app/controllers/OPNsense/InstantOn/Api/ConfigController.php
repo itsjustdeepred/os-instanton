@@ -48,22 +48,22 @@ class ConfigController extends ApiControllerBase
     }
 
     /**
-     * Read a group or section from the switch ("cached" returns the stored copy).
+     * Read a group or section from a switch ("cached" returns the stored copy).
      */
-    public function readAction($what = 'cached')
+    public function readAction($switch = '', $what = 'cached')
     {
         if ($what !== 'cached' && !$this->request->isPost()) {
             return ['status' => 'error', 'message' => 'POST required'];
         }
-        if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', $what)) {
+        if (!preg_match('/^[A-Za-z0-9_]{1,64}$/', $what) || !preg_match('/^[A-Za-z0-9_-]{1,64}$/', $switch)) {
             return ['status' => 'error', 'message' => 'invalid section'];
         }
         $this->sessionClose();
-        return $this->decode((new Backend())->configdpRun('instanton readconfig', [$what]));
+        return $this->decode((new Backend())->configdpRun('instanton readconfig', [$switch . ':' . $what]));
     }
 
     /**
-     * Apply one change: POST request={"action": ..., "params": {...}}
+     * Apply one change: POST request={"switch": <id>, "action": ..., "params": {...}}
      */
     public function applyAction()
     {
@@ -74,7 +74,12 @@ class ConfigController extends ApiControllerBase
         if (!is_array($request) || !in_array($request['action'] ?? '', self::ACTIONS, true)) {
             return ['status' => 'error', 'message' => 'invalid request'];
         }
-        $payload = json_encode(['action' => $request['action'], 'params' => $request['params'] ?? new \stdClass()]);
+        $switch = (string)($request['switch'] ?? '');
+        if (!preg_match('/^[A-Za-z0-9-]{0,64}$/', $switch)) {
+            return ['status' => 'error', 'message' => 'invalid switch'];
+        }
+        $payload = json_encode(['switch' => $switch, 'action' => $request['action'],
+            'params' => $request['params'] ?? new \stdClass()]);
         if ($payload === false || strlen($payload) > 16384) {
             return ['status' => 'error', 'message' => 'request too large'];
         }

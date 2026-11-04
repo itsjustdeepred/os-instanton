@@ -73,7 +73,20 @@ def _port(state, name):
 
 
 def uplink_ports(state):
-    return {p['name'] for p in ((state or {}).get('switch') or {}).get('ports', []) if p.get('role') == 'uplink'}
+    """Ports that must keep working: towards the firewall, and links to the other monitored switches
+    (switching one off would cut the plugin off from the switches behind it)."""
+    return {p['name'] for p in ((state or {}).get('switch') or {}).get('ports', [])
+            if p.get('role') == 'uplink' or p.get('peer')}
+
+
+def _guard(port, what):
+    """Refuse ``what`` on ports that keep the firewall connected to this or another switch."""
+    if port.get('role') == 'uplink':
+        raise ActionError('port %s leads to the firewall; %s would cut the connection to the switch'
+                          % (port['name'], what))
+    if port.get('peer'):
+        raise ActionError('port %s links to another monitored switch; %s would cut the connection to it'
+                          % (port['name'], what))
 
 
 def management_vlan(config):
@@ -164,9 +177,8 @@ def plan(action, params, state, config=None):
                 notes.append('description "%s"' % entry['interfaceDescription'])
         if 'enabled' in params:
             enabled = _flag(params['enabled'], 'Enabled')
-            if not enabled and port.get('role') == 'uplink':
-                raise ActionError('port %s leads to the firewall; switching it off would cut the connection '
-                                  'to the switch' % port['name'])
+            if not enabled:
+                _guard(port, 'switching it off')
             entry['adminState'] = '1' if enabled else '2'
             if enabled != port.get('enabled'):
                 notes.append('enabled' if enabled else 'disabled')
@@ -179,6 +191,8 @@ def plan(action, params, state, config=None):
         if not port.get('poe'):
             raise ActionError('port %s does not support PoE' % port['name'])
         enabled = _flag(params.get('enabled'), 'PoE')
+        if not enabled:
+            _guard(port, 'turning its power off')
         return [('PoEPSEInterfaceList', 'set', {'Interface': {'interfaceName': port['name'],
                                                               'adminEnable': '1' if enabled else '2'}})], \
             'Port %s: PoE %s' % (_label(port), 'enabled' if enabled else 'disabled')
@@ -188,6 +202,7 @@ def plan(action, params, state, config=None):
             raise ActionError('port %s does not support PoE' % port['name'])
         if not (port.get('poe') or {}).get('enabled'):
             raise ActionError('PoE is disabled on port %s' % port['name'])
+        _guard(port, 'a power cycle')
         return [('PoEPSEInterfaceList', 'set', {'Interface': {'interfaceName': port['name'],
                                                               'powerReActivate': '1'}})], \
             'Port %s: PoE power cycled' % _label(port)
@@ -262,8 +277,7 @@ def plan(action, params, state, config=None):
             'Locator LED %s' % ('blinking for 30 minutes' if on else 'off')
     if action == 'cable_test':
         port = _port(state, params.get('port'))
-        if port.get('role') == 'uplink':
-            raise ActionError('port %s leads to the firewall; testing it would interrupt the connection' % port['name'])
+        _guard(port, 'a cable test')
         _confirm(params, 'A cable test (the link drops for a few seconds)')
         return [('CableTestPortList', 'set', {'Entry': {'interfaceName': port['name']}})], \
             'Cable test started on port %s' % _label(port)

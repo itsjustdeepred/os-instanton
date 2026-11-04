@@ -135,47 +135,65 @@ class InstantOnCloud:
     def sites(self):
         return (self.get('/sites/') or {}).get('elements', [])
 
-    def collect(self):
+    def select_sites(self, wanted=None):
+        """Sites of the account matching ``wanted`` (names or ids, case-insensitive); all when empty."""
         sites = self.sites()
         if not sites:
             raise CloudError('the account has no Instant On sites')
-        site = None
-        if self.site:
-            wanted = self.site.strip().lower()
-            site = next((s for s in sites if wanted in (str(s.get('id', '')).lower(),
-                                                        str(s.get('name', '')).lower())), None)
-            if site is None:
-                raise CloudError('site "%s" not found; available: %s' % (
-                    self.site, ', '.join(str(s.get('name')) for s in sites)))
-        else:
-            site = sites[0]
+        if not wanted:
+            return sites
+        keys = {str(w).strip().lower() for w in wanted if str(w).strip()}
+        chosen = [s for s in sites if str(s.get('id', '')).lower() in keys or str(s.get('name', '')).lower() in keys]
+        missing = keys - {str(s.get('id', '')).lower() for s in chosen} - {str(s.get('name', '')).lower() for s in chosen}
+        if missing:
+            raise CloudError('site %s not found; available: %s' % (
+                ', '.join('"%s"' % m for m in sorted(missing)), ', '.join(str(s.get('name')) for s in sites)))
+        return chosen
+
+    def collect_site(self, site):
         prefix = '/sites/%s' % site['id']
         inventory = (self.get(prefix + '/inventory') or {}).get('elements', [])
         clients = (self.get(prefix + '/clientSummary', optional=True) or {}).get('elements', [])
         networks = (self.get(prefix + '/networksSummary', optional=True) or {}).get('elements', [])
         alerts = (self.get(prefix + '/alertsSummary', optional=True) or {}).get('elements', [])
+        name = site.get('name')
+        tag = {'site': name, 'site_id': site.get('id')}
         return {
-            'site': {'id': site.get('id'), 'name': site.get('name'), 'health': site.get('health', '')},
-            'sites': [{'id': s.get('id'), 'name': s.get('name')} for s in sites],
-            'devices': [normalize_device(d) for d in inventory],
-            'clients': [normalize_client(c) for c in clients],
-            # the API also returns the Wi-Fi passphrase (preSharedKey); it is never copied
-            'networks': [{'name': pick(n, 'networkName', 'name', 'ssid'),
-                          'type': pick(n, 'networkType', 'type'),
-                          'enabled': n.get('isEnabled', n.get('enabled', '')),
-                          'hidden': bool(n.get('isSsidHidden')),
-                          'security': pick(n, 'security'), 'authentication': pick(n, 'authentication'),
-                          'vlan': n.get('vlanId') if n.get('useVlan') else None,
-                          'bands': [b for b, k in (('2.4 GHz', 'isAvailableOn24GHzRadioBand'),
-                                                   ('5 GHz', 'isAvailableOn5GHzRadioBand'),
-                                                   ('6 GHz', 'isAvailableOn6GHzRadioBand')) if n.get(k)],
-                          'aps': len([a for a in n.get('accessPoints') or [] if a.get('isBoundToNetwork')]),
-                          'clients': pick(n, 'clientsCount', 'wirelessClientsCount', default=0)}
-                         for n in networks],
-            'alerts': [{'type': pick(a, 'type', 'alertType'), 'severity': pick(a, 'severity'),
-                        'time': pick(a, 'raisedTime', 'time'), 'device': pick(a, 'deviceName', 'source')}
+            'site': {'id': site.get('id'), 'name': name, 'health': site.get('health', ''),
+                     'status': site.get('status', ''), 'alerts': site.get('activeAlertsCount'),
+                     'role': site.get('userRoleOnSite', '')},
+            'devices': [dict(normalize_device(d), **tag) for d in inventory],
+            'clients': [dict(normalize_client(c), **tag) for c in clients],
+            'networks': [dict(normalize_network(n), **tag) for n in networks],
+            'alerts': [dict({'type': pick(a, 'type', 'alertType'), 'severity': pick(a, 'severity'),
+                             'time': pick(a, 'raisedTime', 'time'), 'device': pick(a, 'deviceName', 'source')}, **tag)
                        for a in alerts],
         }
+
+    def collect(self, wanted=None):
+        """Read the selected sites (all when ``wanted`` is empty) and merge them."""
+        out = {'sites': [], 'devices': [], 'clients': [], 'networks': [], 'alerts': []}
+        for site in self.select_sites(wanted):
+            data = self.collect_site(site)
+            out['sites'].append(data['site'])
+            for key in ('devices', 'clients', 'networks', 'alerts'):
+                out[key].extend(data[key])
+        return out
+
+
+def normalize_network(n):
+    # the API also returns the Wi-Fi passphrase (preSharedKey); it is never copied
+    return {'id': n.get('id'), 'name': pick(n, 'networkName', 'name', 'ssid'),
+            'type': pick(n, 'networkType', 'type'),
+            'enabled': n.get('isEnabled', n.get('enabled', '')),
+            'hidden': bool(n.get('isSsidHidden')),
+            'security': pick(n, 'security'), 'authentication': pick(n, 'authentication'),
+            'vlan': n.get('vlanId') if n.get('useVlan') else None,
+            'bands': [b for b, k in (('2.4 GHz', 'isAvailableOn24GHzRadioBand'),
+                                     ('5 GHz', 'isAvailableOn5GHzRadioBand'),
+                                     ('6 GHz', 'isAvailableOn6GHzRadioBand')) if n.get(k)],
+            'aps': len([a for a in n.get('accessPoints') or [] if a.get('isBoundToNetwork')]),
+            'clients': pick(n, 'clientsCount', 'wirelessClientsCount', default=0)}
 
 
 def normalize_device(d):
@@ -197,6 +215,8 @@ def normalize_device(d):
         'mesh_snr': d.get('parentSnrInDb') if d.get('parentId') else None,
         'mesh_band': pick(d, 'parentRadioBand') if d.get('parentId') else '',
         'mesh_quality': pick(d.get('uplinkSummary') or {}, 'signalQuality') if d.get('parentId') else '',
+        'mesh_parent_id': str(d.get('parentId') or '').lower(),
+        'uplink_mac': str(d.get('uplinkDeviceMacAddress') or '').lower(),
         'locator_led': d.get('isLocatorLedActive'),
     }
 
@@ -213,6 +233,10 @@ def normalize_client(c):
         'signal': c.get('signalInDbm'), 'snr': c.get('snrInDb'), 'signal_quality': pick(c, 'signalQuality'),
         'health': pick(c, 'health', 'healthInPercent'), 'network': pick(c, 'wiredNetworkName'),
         'blocked': bool(c.get('isBlocked')),
+        'ap_mac': str(pick(c, 'deviceId')).lower(),
+        # the cloud fingerprints some clients: e.g. ["Brother", "Printer"], ["Android"]
+        'classification': [pick(x, 'str', 'id', 'name') if isinstance(x, dict) else str(x)
+                           for x in c.get('classification') or []],
         'down_mbps': c.get('downstreamSpeedInMegabitsPerSecond'),
         'up_mbps': c.get('upstreamSpeedInMegabitsPerSecond'),
         'rx_bytes': c.get('upstreamDataTransferredInBytes'),
