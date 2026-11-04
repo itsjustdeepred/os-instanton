@@ -383,6 +383,34 @@ class ActionsTest(unittest.TestCase):
         with self.assertRaisesRegex(actions.ActionError, 'confirm'):
             actions.plan('vlans', {'port': '1/5', 'untagged': '1', 'tagged': ['20'], 'confirm': False}, state)
 
+    def test_vlan_create_rename_delete(self):
+        state = {'switch': {'vlans': [{'id': 1, 'name': ''}, {'id': 20, 'name': 'IoT'}, {'id': 30, 'name': 'HOME'},
+                                      {'id': 60, 'name': ''}], 'ports': [
+            {'name': '1/5', 'role': 'device', 'untagged': '30', 'tagged': '', 'enabled': True},
+            {'name': '1/51', 'role': 'uplink', 'untagged': '1', 'tagged': '20,30', 'enabled': True}]}}
+        config = {'sections': {'ManagementInterfaceGlobalSetting': {'managementVLAN': '1'}}}
+        changes, summary = actions.plan('vlan', {'op': 'add', 'id': '70', 'name': 'Lab'}, state, config)
+        self.assertEqual(changes, [('VLANList', 'add', {'VLAN': {'VLANID': '70', 'VLANName': 'Lab'}})])
+        with self.assertRaisesRegex(actions.ActionError, 'already exists'):
+            actions.plan('vlan', {'op': 'add', 'id': '20'}, state, config)
+        with self.assertRaisesRegex(actions.ActionError, '2 to 4094'):
+            actions.plan('vlan', {'op': 'add', 'id': '5000'}, state, config)
+        with self.assertRaisesRegex(actions.ActionError, 'letters'):
+            actions.plan('vlan', {'op': 'add', 'id': '71', 'name': 'a/b'}, state, config)
+        changes, _ = actions.plan('vlan', {'op': 'rename', 'id': '20', 'name': 'Things'}, state, config)
+        self.assertEqual(changes[0], ('VLANList', 'set', {'VLAN': {'VLANID': '20', 'VLANName': 'Things'}}))
+        changes, _ = actions.plan('vlan', {'op': 'delete', 'id': '60'}, state, config)
+        self.assertEqual(changes, [('VLANList', 'delete', {'VLAN': {'VLANID': '60'}})])
+        with self.assertRaisesRegex(actions.ActionError, 'leads to the firewall'):
+            actions.plan('vlan', {'op': 'delete', 'id': '20', 'confirm': True}, state, config)
+        with self.assertRaisesRegex(actions.ActionError, 'default VLAN'):
+            actions.plan('vlan', {'op': 'delete', 'id': '1', 'confirm': True}, state, config)
+        state['switch']['ports'][1]['tagged'] = '20'
+        with self.assertRaisesRegex(actions.ActionError, 'confirm'):
+            actions.plan('vlan', {'op': 'delete', 'id': '30'}, state, config)
+        changes, summary = actions.plan('vlan', {'op': 'delete', 'id': '30', 'confirm': True}, state, config)
+        self.assertIn('1/5', summary)
+
     def test_port_speed(self):
         state = {'switch': {'ports': [{'name': '1/5', 'role': 'device', 'enabled': True, 'auto_neg': True}]}}
         changes, _ = actions.plan('port', {'port': '1/5', 'mode': '100F'}, state)

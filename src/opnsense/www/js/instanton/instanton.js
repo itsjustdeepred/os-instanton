@@ -303,6 +303,8 @@
         this.rowClass = options.rowClass || null;
         this.searchable = options.search !== false;
         this.id = options.id || '';
+        this.pageSize = options.pageSize || 0;
+        this.page = 0;
         this.build();
     }
 
@@ -317,10 +319,19 @@
             (this.searchable ? '<div class="instanton-table-tools"><input type="search" class="form-control input-sm" ' +
                 'placeholder="Search..." aria-label="Search"><span class="instanton-count text-muted"></span></div>' : '') +
             '<div class="table-responsive"><table class="table table-striped table-condensed table-hover">' +
-            '<thead>' + head + '</thead><tbody></tbody></table></div></div>');
+            '<thead>' + head + '</thead><tbody></tbody></table></div>' +
+            (this.pageSize ? '<div class="instanton-pager"><button type="button" class="btn btn-default btn-xs" data-step="-1">' +
+                '<i class="fa fa-chevron-left"></i> Newer</button><span class="text-muted small"></span>' +
+                '<button type="button" class="btn btn-default btn-xs" data-step="1">Older <i class="fa fa-chevron-right"></i></button></div>' : '') +
+            '</div>');
         this.$target.empty().append(this.$wrap);
+        this.$wrap.find('.instanton-pager button').on('click', function () {
+            self.page += parseInt($(this).data('step'), 10);
+            self.render();
+        });
         this.$wrap.find('input[type=search]').on('input', function () {
             self.filter = $(this).val().toLowerCase();
+            self.page = 0;
             self.render();
         });
         this.$wrap.find('th.sortable').on('click', function () {
@@ -331,6 +342,7 @@
                 self.sortKey = key;
                 self.sortDir = 1;
             }
+            self.page = 0;
             self.render();
         });
     };
@@ -371,7 +383,18 @@
     Table.prototype.render = function () {
         var self = this;
         var rows = this.visibleRows();
-        var html = rows.length ? $.map(rows, function (r) {
+        var shown = rows;
+        if (this.pageSize) {
+            var pages = Math.max(1, Math.ceil(rows.length / this.pageSize));
+            this.page = Math.min(Math.max(0, this.page), pages - 1);
+            var from = this.page * this.pageSize;
+            shown = rows.slice(from, from + this.pageSize);
+            var $pager = this.$wrap.find('.instanton-pager').toggle(rows.length > this.pageSize);
+            $pager.find('span').text((from + 1) + '-' + (from + shown.length) + ' of ' + rows.length);
+            $pager.find('[data-step=-1]').prop('disabled', this.page === 0);
+            $pager.find('[data-step=1]').prop('disabled', this.page >= pages - 1);
+        }
+        var html = shown.length ? $.map(shown, function (r) {
             var cls = self.rowClass ? self.rowClass(r) : '';
             return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + $.map(self.columns, function (c) {
                 var v = c.render ? c.render(r) : esc(c.key ? r[c.key] : (c.text ? c.text(r) : ''));
@@ -733,7 +756,9 @@
                     '<div id="instanton-sw-panel"></div>' +
                     section('Ports', '<div id="instanton-ports"></div>', '<a id="poe"></a><label class="instanton-auto small" ' +
                         'style="margin-left:auto;font-weight:normal"><input type="checkbox" id="instanton-only-up" checked> only ports with a link</label>') +
-                    '<div class="row"><div class="col-md-4">' + section('VLANs', '<div id="instanton-vlans"></div>') +
+                    '<div class="row"><div class="col-md-4">' + section('VLANs', '<div id="instanton-vlans"></div>',
+                        '<button type="button" class="btn btn-default btn-xs instanton-vlan-add" style="margin-left:auto">' +
+                        icon('plus') + ' Add VLAN</button>') +
                     '</div><div class="col-md-8">' + section('Switch log', '<div class="form-inline instanton-log-tools">' +
                         '<select class="form-control input-sm" id="instanton-log-level"><option value="">all levels</option>' +
                         '<option value="warning">warning and worse</option><option value="error">error and worse</option></select></div>' +
@@ -746,10 +771,20 @@
                 vlanTable = new Table($('#instanton-vlans'), {search: false, sortKey: 0, columns: [
                     {label: 'ID', key: 'id', sortValue: function (v) { return v.id; }},
                     {label: 'Name', key: 'name'},
-                    {label: 'Ports', title: 'Ports carrying this VLAN (untagged U, tagged T)', key: 'ports', sort: false}
+                    {label: 'Ports', title: 'Ports carrying this VLAN (untagged U, tagged T)', key: 'ports', sort: false},
+                    {label: '', cls: 'text-right text-nowrap', sort: false, render: function (v) {
+                        if (!canChange) { return ''; }
+                        return '<button type="button" class="btn btn-default btn-xs instanton-vlan-edit" data-id="' + esc(v.id) +
+                            '" title="Rename">' + icon('pencil') + '</button>' + (v.id === 1 ? '' :
+                            ' <button type="button" class="btn btn-default btn-xs instanton-vlan-del" data-id="' + esc(v.id) +
+                            '" title="Delete">' + icon('trash') + '</button>');
+                    }}
                 ]});
+                $('#instanton-vlans').on('click', '.instanton-vlan-edit', function () { vlanDialog('rename', $(this).data('id')); })
+                    .on('click', '.instanton-vlan-del', function () { vlanDialog('delete', $(this).data('id')); });
+                page.$content.on('click', '.instanton-vlan-add', function () { vlanDialog('add'); });
                 var rank = {emergency: 0, alert: 1, critical: 2, error: 3, warning: 4, notice: 5, info: 6, debug: 7};
-                logTable = new Table($('#instanton-log'), {columns: [
+                logTable = new Table($('#instanton-log'), {pageSize: 20, columns: [
                     {label: 'Switch time', title: 'Time according to the switch clock', key: 'time_raw',
                         sortValue: function (l) { return l.time || 0; }, text: function (l) { return datetime(l.time) || l.time_raw; }},
                     {label: 'Level', key: 'severity', render: function (l) { return levelBadge(l.severity); }},
@@ -758,7 +793,7 @@
                     var lvl = $('#instanton-log-level').val();
                     return !lvl || rank[l.severity] <= rank[lvl];
                 }});
-                $('#instanton-log-level').on('change', function () { logTable.render(); });
+                $('#instanton-log-level').on('change', function () { logTable.page = 0; logTable.render(); });
                 $('#instanton-only-up').on('change', function () { portTable.render(); });
                 $('#instanton-ports').on('click', '.instanton-port-edit', function () { editPort($(this).data('port')); });
                 // a click on a port of the front panel opens its settings (or shows its row when changes are off)
@@ -811,8 +846,10 @@
             });
             vlanTable.setRows($.map(sw.vlans || [], function (v) {
                 var list = vlanPorts[String(v.id)] || [];
-                return {id: v.id, name: v.name, ports: list.length > 8 ? list.length + ' ports' : list.join(' ')};
+                return {id: v.id, name: v.name, list: list, ports: list.length > 8 ? list.length + ' ports' : list.join(' ')};
             }));
+            vlanRows = vlanTable.rows;
+            page.$content.find('.instanton-vlan-add').toggle(canChange);
             api('status/log/' + encodeURIComponent(sw.id || '')).done(function (ld) { logTable.setRows(ld.log || []); });
             highlightHash();
             // arriving with #port=... (from the overview or a link): open that port once
@@ -824,6 +861,34 @@
         };
 
         var openedFromHash = '';
+        var vlanRows = [];
+
+        function vlanDialog(op, id) {
+            var v = $.grep(vlanRows, function (x) { return x.id === id; })[0] || {};
+            var done = function (r) {
+                changeResult(page.$banner, r);
+                api('service/refresh', 'POST').always(function () { page.reload(); });
+            };
+            if (op === 'add') {
+                dialog({title: 'Add VLAN', ok: 'Create',
+                    intro: 'The new VLAN exists on the switch but no port carries it yet: add it to ports from their settings ' +
+                        '(click a port on the front panel).',
+                    fields: [{name: 'id', label: 'VLAN ID', placeholder: '2 to 4094', help: 'Must match the VLAN ID used on the firewall and the access points.'},
+                        {name: 'name', label: 'Name', placeholder: 'optional, for example Cameras'}],
+                    submit: function (val) { return applyChange('vlan', {op: 'add', id: val.id, name: val.name}).done(done); }});
+            } else if (op === 'rename') {
+                dialog({title: 'Rename VLAN ' + id, ok: 'Save',
+                    fields: [{name: 'name', label: 'Name', value: v.name || '', help: 'Letters, digits, spaces and - _ . (up to 32).'}],
+                    submit: function (val) { return applyChange('vlan', {op: 'rename', id: id, name: val.name}).done(done); }});
+            } else {
+                var used = (v.list || []).length;
+                dialog({title: 'Delete VLAN ' + id + (v.name ? ' (' + v.name + ')' : ''), ok: 'Delete', danger: true,
+                    intro: used ? 'This VLAN is still carried by ports ' + esc((v.list || []).join(' ')) + ' (U untagged, T tagged). ' +
+                        'Deleting it removes it from those ports.' : 'No port carries this VLAN.',
+                    confirm: used ? 'I understand that the devices on these ports can lose their connection.' : null,
+                    submit: function () { return applyChange('vlan', {op: 'delete', id: id, confirm: true}).done(done); }});
+            }
+        }
 
         function editPort(name) {
             var p = $.grep(latestPorts, function (x) { return x.name === name; })[0];
@@ -1342,7 +1407,7 @@
                 values[$i.data('name')] = $i.is(':checkbox') ? $i.is(':checked') : $i.val();
             });
             $ok.prop('disabled', true);
-            $m.find('.instanton-modal-status').html(icon('spinner fa-pulse') + ' Talking to the switch...');
+            $m.find('.instanton-modal-status').html(icon('spinner fa-pulse') + ' Applying...');
             $.when(opts.submit(values)).always(function () { $m.modal('hide'); });
         });
         $m.on('hidden.bs.modal', function () { $m.remove(); });
@@ -1612,12 +1677,31 @@
         function read(what) {
             var $btn = page.$content.find('.instanton-read');
             $btn.prop('disabled', true).find('i').addClass('fa-spin');
+            reading = true;
             return $.ajax({url: API + 'config/read/' + swPath() + encodeURIComponent(what), type: 'POST', dataType: 'json', cache: false})
                 .done(function (d) {
                     if (d.status !== 'ok') { notice(page.$banner, 'danger', esc(d.message || 'Cannot read the switch.')); return; }
                     data = d;
                     draw();
-                }).always(function () { $btn.prop('disabled', false).find('i').removeClass('fa-spin'); });
+                }).always(function () {
+                    reading = false;
+                    draw();
+                });
+        }
+
+        // sections of the open tab that were never read are read on their own, once per tab
+        var autoRead = {};
+        var reading = false;
+        function readMissing() {
+            if (!data || autoRead[group]) { return; }
+            var missing = $.grep(Object.keys(data.catalog || {}), function (n) {
+                return data.catalog[n].group === group && (data.sections || {})[n] === undefined && !(data.errors || {})[n];
+            });
+            if (missing.length) {
+                autoRead[group] = true;
+                read(group);
+                draw();
+            }
         }
 
         function after(section) {
@@ -1722,7 +1806,8 @@
             var editable = canChange && meta.risk !== 'blocked';
             var confirmText = meta.risk === 'caution' ? 'I checked this change: it can interrupt traffic on the switch.' : null;
             if (err) { $body.html('<p class="text-muted small">' + esc(err) + '</p>'); return $box; }
-            if (value === undefined) { $body.html('<p class="text-muted small">Not read yet: press <b>Read from switch</b>.</p>'); return $box; }
+            if (value === undefined) { $body.html('<p class="text-muted small">' + (reading ? icon('spinner fa-pulse') +
+                ' Reading from the switch...' : 'Not read yet: press <b>Read from switch</b>.') + '</p>'); return $box; }
             if (meta.kind === 'setting') {
                 var fields = scalarFields(value);
                 var rows = $.map(fields, function (v, k) { return [[humanize(k), esc(v)]]; });
@@ -1855,14 +1940,12 @@
                 e.preventDefault();
                 group = $(this).data('group');
                 setHashParam('tab', group);
-                var missing = $.grep(Object.keys(data.catalog), function (n) {
-                    return data.catalog[n].group === group && data.sections[n] === undefined && !(data.errors || {})[n];
-                });
                 draw();
-                if (missing.length) { read(group); }
+                readMissing();
             });
-            page.$content.find('.instanton-read').on('click', function () { read(group); });
-            page.$content.find('.instanton-read-all').on('click', function () { read('all'); });
+            page.$content.find('.instanton-read, .instanton-read-all').prop('disabled', reading);
+            page.$content.find('.instanton-read').on('click', function () { read(group); draw(); });
+            page.$content.find('.instanton-read-all').on('click', function () { read('all'); draw(); });
         }
 
         page.render = function (d) {
@@ -1878,9 +1961,8 @@
             if (d.status !== 'ok') { page.$content.html('<p class="text-danger">' + esc(d.message || 'No data.') + '</p>'); return; }
             data = d;
             canChange = !!d.allow_changes;
-            var empty = !Object.keys(d.sections || {}).length;
             draw();
-            if (empty) { read(group); }
+            readMissing();
         };
         page.reload();
     }

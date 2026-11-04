@@ -72,6 +72,9 @@ def _port(state, name):
     raise ActionError('port %s is not known; refresh the data and try again' % name)
 
 
+VLAN_NAME_RE = re.compile(r'^[A-Za-z0-9 _.-]{1,32}$')
+
+
 def uplink_ports(state):
     """Ports that must keep working: towards the firewall, and links to the other monitored switches
     (switching one off would cut the plugin off from the switches behind it)."""
@@ -174,6 +177,59 @@ def plan_section(params, state, config):
     return [(name, op, {row: entries})], '%s: %s %s' % (meta['title'], verb, keys)
 
 
+def _vlan_ports(state, vid):
+    """{port name: 'U' or 'T'} for the ports that carry VLAN ``vid``."""
+    out = {}
+    for p in ((state or {}).get('switch') or {}).get('ports', []):
+        for kind, key in (('U', 'untagged'), ('T', 'tagged')):
+            if vid in [v.strip() for v in str(p.get(key) or '').split(',')]:
+                out[p['name']] = kind
+    return out
+
+
+def plan_vlan(params, state, config):
+    """Create, rename or delete one VLAN."""
+    op = str(params.get('op') or '')
+    vid = str(params.get('id') or '').strip()
+    if not re.match(r'^\d{1,4}$', vid) or not 1 <= int(vid) <= 4094:
+        raise ActionError('the VLAN ID must be a number from 2 to 4094')
+    vid = str(int(vid))
+    vlans = {str(v.get('id')): v for v in ((state or {}).get('switch') or {}).get('vlans', [])}
+    if op in ('add', 'rename'):
+        name = _text(params.get('name') or '', 'Name', 32)
+        if name and not VLAN_NAME_RE.match(name):
+            raise ActionError('the name can use letters, digits, spaces and - _ . only')
+    if op == 'add':
+        if vid == '1':
+            raise ActionError('VLAN 1 is the default VLAN and always exists')
+        if vid in vlans:
+            raise ActionError('VLAN %s already exists' % vid)
+        return [('VLANList', 'add', {'VLAN': {'VLANID': vid, 'VLANName': name}})], \
+            'VLAN %s created' % vid + (' ("%s")' % name if name else '')
+    if vid not in vlans:
+        raise ActionError('VLAN %s does not exist on the switch' % vid)
+    if op == 'rename':
+        if name == (vlans[vid].get('name') or ''):
+            raise ActionError('nothing to change')
+        return [('VLANList', 'set', {'VLAN': {'VLANID': vid, 'VLANName': name}})], \
+            'VLAN %s renamed to "%s"' % (vid, name)
+    if op == 'delete':
+        if vid == '1':
+            raise ActionError('VLAN 1 is the default VLAN and cannot be deleted')
+        if vid == management_vlan(config):
+            raise ActionError('VLAN %s is the management VLAN of the switch' % vid)
+        ports = _vlan_ports(state, vid)
+        busy = sorted(set(ports) & uplink_ports(state))
+        if busy:
+            raise ActionError('VLAN %s is carried by port %s, which leads to the firewall or another switch'
+                              % (vid, ', '.join(busy)))
+        if ports:
+            _confirm(params, 'Deleting a VLAN that ports still use')
+        return [('VLANList', 'delete', {'VLAN': {'VLANID': vid}})], 'VLAN %s deleted' % vid + \
+            (' (was on ports %s)' % ', '.join(sorted(ports)) if ports else '')
+    raise ActionError('invalid operation %r' % op)
+
+
 def _label(port):
     return port['name'] + (' "%s"' % port['description'] if port.get('description') else '')
 
@@ -248,6 +304,8 @@ def plan(action, params, state, config=None):
         if remove:
             notes.append('tagged - %s' % ','.join(remove))
         return changes, 'Port %s VLANs: %s' % (_label(port), ', '.join(notes))
+    if action == 'vlan':
+        return plan_vlan(params, state, config)
     if action == 'poe':
         port = _port(state, params.get('port'))
         if not port.get('poe'):

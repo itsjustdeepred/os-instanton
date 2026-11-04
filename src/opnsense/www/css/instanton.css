@@ -104,3 +104,7 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .progress-bar.instanton-lvl-3 { background-color: #d8b021; }
 .progress-bar.instanton-lvl-4 { background-color: #e5832b; }
 .progress-bar.instanton-lvl-5 { background-color: #d33f3f; }
+
+/* table pages (switch log) */
+.instanton-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0 2px; }
+.instanton-pager .btn .fa { margin: 0 3px; }
