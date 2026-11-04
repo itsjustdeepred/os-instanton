@@ -22,7 +22,7 @@ rmdir /usr/local/opnsense/scripts/instanton/lib /usr/local/opnsense/scripts/inst
 	/usr/local/opnsense/service/templates/OPNsense/InstantOn \
 	/usr/local/opnsense/www/js/instanton 2>/dev/null || true
 rm -rf /var/db/instanton /usr/local/etc/instanton /etc/rc.conf.d/instanton /var/run/instanton.pid
-rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json
+rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json /var/lib/php/tmp/opnsense_menu_cache.xml /var/lib/php/tmp/opnsense_acl_cache.json
 service configd restart
 configctl template reload OPNsense/Syslog
 /usr/local/sbin/pluginctl -s syslog restart >/dev/null 2>&1 || true

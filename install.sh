@@ -22,7 +22,7 @@ mkdir -p /var/db/instanton /usr/local/etc/instanton
 chmod 0750 /var/db/instanton /usr/local/etc/instanton
 
 echo ">>> reloading services"
-rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json
+rm -f /tmp/opnsense_menu_cache.xml /tmp/opnsense_acl_cache.json /var/lib/php/tmp/opnsense_menu_cache.xml /var/lib/php/tmp/opnsense_acl_cache.json
 service configd restart
 configctl template reload OPNsense/InstantOn
 configctl template reload OPNsense/Syslog
