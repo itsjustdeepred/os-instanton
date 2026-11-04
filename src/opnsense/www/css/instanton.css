@@ -24,7 +24,8 @@
 .instanton-insight-detail { color: #555; margin-left: 22px; font-size: 12px; }
 .instanton-table-tools { display: flex; align-items: center; gap: 10px; margin-bottom: 6px; }
 .instanton-table-tools input { max-width: 260px; }
-.instanton-table th.sortable { cursor: pointer; white-space: nowrap; }
+.instanton-table th.sortable { cursor: pointer; }
+.instanton-table th { vertical-align: bottom; line-height: 1.25; }
 .instanton-table th .fa-info-circle { font-size: 11px; }
 .instanton-table td { vertical-align: middle !important; }
 .instanton-dim td { opacity: .55; }
@@ -86,7 +87,7 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 
 /* selects: the theme sets the line height equal to the height, which pushes the text down and under the arrow */
 .instanton-page select.form-control, .instanton-modal select.form-control {
-    height: 30px; line-height: 1.4; padding: 4px 28px 4px 8px; background-position: right 8px center; }
+    height: 30px; line-height: 1.4; padding: 4px 36px 4px 10px; background-position: right 12px center; min-width: 110px; }
 .instanton-page select.form-control:not(.input-sm), .instanton-modal select.form-control:not(.input-sm) { height: 34px; }
 
 /* front panel centred in its box, with the legend under it */
@@ -108,3 +109,14 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 /* table pages (switch log) */
 .instanton-pager { display: flex; align-items: center; justify-content: center; gap: 12px; padding: 6px 0 2px; }
 .instanton-pager .btn .fa { margin: 0 3px; }
+
+/* configuration tables: no sideways scrolling, long lists wrap, extra fields open below the row */
+.instanton-config-body .instanton-table td { white-space: normal; word-break: break-word; max-width: 320px; }
+.instanton-config-body .instanton-table th { white-space: normal; }
+.instanton-same { margin: 0 0 6px; line-height: 1.7; }
+.instanton-row-detail > td { background: rgba(127, 127, 127, .06); }
+.instanton-fields { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 4px 18px; margin: 4px 0; }
+.instanton-fields dt { font-weight: normal; font-size: 11px; opacity: .65; }
+.instanton-fields dd { margin: 0; word-break: break-word; }
+.instanton-row-more { padding: 0 4px; white-space: nowrap; }
+.instanton-loading { text-align: center; padding: 60px 0; font-size: 14px; }

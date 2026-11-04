@@ -396,7 +396,7 @@
         var html = shown.length ? $.map(shown, function (r) {
             var cls = self.rowClass ? self.rowClass(r) : '';
             return '<tr' + (cls ? ' class="' + cls + '"' : '') + '>' + $.map(self.columns, function (c) {
-                var v = c.render ? c.render(r) : esc(c.key ? r[c.key] : (c.text ? c.text(r) : ''));
+                var v = c.render ? c.render(r) : esc(c.text ? c.text(r) : (c.key ? r[c.key] : ''));
                 return '<td class="' + (c.cls || '') + '">' + (v === undefined || v === null ? '' : v) + '</td>';
             }).join('') + '</tr>';
         }).join('') : '<tr><td colspan="' + this.columns.length + '" class="text-center text-muted">' +
@@ -505,7 +505,8 @@
         $root.addClass('instanton-page');
         this.$bar = toolbar(this.reload.bind(this));
         this.$banner = $('<div class="instanton-banner"></div>');
-        this.$content = $('<div class="instanton-content"></div>');
+        this.$content = $('<div class="instanton-content"><p class="instanton-loading text-muted">' +
+            '<i class="fa fa-spinner fa-pulse"></i> Loading...</p></div>');
         $root.empty().append(this.$bar, helpPanel(name), this.$banner, this.$content);
     }
 
@@ -755,12 +756,14 @@
                     '<div id="instanton-sw-panel"></div>' +
                     section('Ports', '<div id="instanton-ports"></div>', '<a id="poe"></a><label class="instanton-auto small" ' +
                         'style="margin-left:auto;font-weight:normal"><input type="checkbox" id="instanton-only-up" checked> only ports with a link</label>') +
-                    '<div class="row"><div class="col-md-4">' + section('VLANs', '<div id="instanton-vlans"></div>',
+                    '<div class="row"><div class="col-lg-5">' + section('VLANs', '<div id="instanton-vlans"></div>',
                         '<button type="button" class="btn btn-default btn-xs instanton-vlan-add" style="margin-left:auto">' +
                         icon('plus') + ' Add VLAN</button>') +
-                    '</div><div class="col-md-8">' + section('Switch log', '<div class="form-inline instanton-log-tools">' +
+                    '</div><div class="col-lg-7">' + section('Switch log', '<div class="form-inline instanton-log-tools">' +
                         '<select class="form-control input-sm" id="instanton-log-level"><option value="">all levels</option>' +
-                        '<option value="warning">warning and worse</option><option value="error">error and worse</option></select></div>' +
+                        '<option value="warning">warning and worse</option><option value="error">error and worse</option></select>' +
+                        '<label class="small" style="font-weight:normal;margin:0 0 0 12px"><input type="checkbox" id="instanton-log-logins" checked> ' +
+                        'hide web logins</label></div>' +
                         '<div id="instanton-log"></div>') + '</div></div>');
                 portTable = new Table($('#instanton-ports'), {sortKey: 0, columns: portColumns(), id: 'ports',
                     extraFilter: function (p) {
@@ -790,9 +793,11 @@
                     {label: 'Message', key: 'message'}
                 ], extraFilter: function (l) {
                     var lvl = $('#instanton-log-level').val();
+                    // every poll of this plugin logs in to the switch: those lines drown everything else
+                    if ($('#instanton-log-logins').is(':checked') && /^%AAA-I-(CONNECT|DISCONNECT):/.test(l.message || '')) { return false; }
                     return !lvl || rank[l.severity] <= rank[lvl];
                 }});
-                $('#instanton-log-level').on('change', function () { logTable.page = 0; logTable.render(); });
+                $('#instanton-log-level, #instanton-log-logins').on('change', function () { logTable.page = 0; logTable.render(); });
                 $('#instanton-only-up').on('change', function () { portTable.render(); });
                 $('#instanton-ports').on('click', '.instanton-port-edit', function () { editPort($(this).data('port')); });
                 // a click on a port of the front panel opens its settings (or shows its row when changes are off)
@@ -830,7 +835,7 @@
                     '" style="width:' + Math.min(100, sw.poe.percent) + '%"></div></div>' : ''],
                 ['Clock', skew === null || skew === undefined ? '' : (Math.abs(skew) > 300 ?
                     '<span class="text-warning">' + icon('clock-o') + ' off by ' + esc(duration(Math.abs(skew))) + '</span>' : badge('in sync', 'success'))
-                    + ' <span class="text-muted small">' + esc((sw.timezone_name || '') + ' UTC' + (sw.timezone || '')) + '</span>',
+                    + ' <span class="text-muted small">' + esc(sw.timezone_name && sw.timezone_name !== 'UTC' ? sw.timezone_name + ' (UTC' + (sw.timezone || '') + ')' : 'UTC' + (sw.timezone || '')) + '</span>',
                     'Difference between the switch clock and the firewall clock, and the time zone of the switch'],
                 ['Time server', sntpStatus(sw), 'SNTP servers configured on the switch and whether they answer'],
                 ['Configuration', sw.config_saved ? badge('saved', 'success') : badge('unsaved changes', 'warning')],
@@ -1043,7 +1048,7 @@
             var nets = data.cloud_networks || [];
             canChange = !!(data.meta || {}).allow_changes;
             if ((nets.length || sites.length) && !netTable) {
-                var addBtn = canChange && sites.length ? '<button type="button" class="btn btn-success btn-xs instanton-net-add" ' +
+                var addBtn = canChange && sites.length ? '<button type="button" class="btn btn-default btn-xs instanton-net-add" ' +
                     'style="margin-left:auto">' + icon('plus') + ' Add network</button>' : '';
                 $('#instanton-cloud-networks').html(section('Wi-Fi networks', '<div id="instanton-net-table"></div>' +
                     '<p class="small text-muted">Changes go through the Instant On cloud and reach the access points within a minute.' +
@@ -1629,6 +1634,31 @@
         blocked: ['danger', 'Controls access to the switch: read-only here, change it from the switch web interface']
     };
 
+    // the columns worth a place in a configuration table: the identifying fields and the ones that differ
+    // between rows; empty columns are dropped, constant ones listed once above the table, the rest one click away
+    var PREFERRED_COLUMNS = {
+        VLANInterfaceISList: ['interfaceName', 'switchportModeAdmin', 'generalPVID', 'generalUntaggedVLANs', 'generalTaggedVLANs',
+            'generalForbiddenVLANs', 'generalIngressFiltering'],
+        VLANInterfaceList: ['interfaceName', 'PVID', 'frameType', 'ingressFilteringEnabled'],
+        VLANMembershipInterfaceList: ['interfaceName', 'currentUntaggedVLANs', 'currentTaggedVLANs']
+    };
+    var KEY_COLUMNS = ['interfaceName', 'VLANID', 'VLANName', 'unitID', 'IPAddress', 'IPAddr', 'MACAddress', 'name', 'userName',
+        'groupName', 'index'];
+    var MAX_COLUMNS = 7;
+
+    function tableLayout(section, rows, all) {
+        var filled = $.grep(all, function (k) { return $.grep(rows, function (r) { return r[k] !== '' && r[k] !== undefined; }).length > 0; });
+        var same = rows.length > 2 ? $.grep(filled, function (k) {
+            return KEY_COLUMNS.indexOf(k) < 0 && $.grep(rows, function (r) { return String(r[k]) !== String(rows[0][k]); }).length === 0;
+        }) : [];
+        var varying = $.grep(filled, function (k) { return same.indexOf(k) < 0; });
+        var order = $.grep(PREFERRED_COLUMNS[section] || [], function (k) { return varying.indexOf(k) >= 0; });
+        $.each(KEY_COLUMNS, function (_, k) { if (varying.indexOf(k) >= 0 && order.indexOf(k) < 0) { order.push(k); } });
+        $.each(varying, function (_, k) { if (order.indexOf(k) < 0) { order.push(k); } });
+        var shown = order.slice(0, MAX_COLUMNS);
+        return {shown: shown, same: same, more: $.grep(order, function (k) { return shown.indexOf(k) < 0; })};
+    }
+
     function humanize(name) {
         return String(name).replace(/_/g, ' ').replace(/([a-z0-9])([A-Z])/g, '$1 $2').replace(/([A-Z]+)([A-Z][a-z]{2,})/g, '$1 $2')
             .replace(/\bCo S\b/g, 'CoS').replace(/\bQo S\b/g, 'QoS')
@@ -1833,9 +1863,17 @@
             if (!tr.rows.length) {
                 $body.html('<p class="text-muted small">Empty.</p>');
             } else {
-                var cols = [];
-                $.each(tr.rows, function (_, r) { $.each(scalarFields(r), function (k) { if (cols.indexOf(k) < 0) { cols.push(k); } }); });
-                var t = new Table($('<div>').appendTo($body), {search: tr.rows.length > 10, columns: $.map(cols, function (c) {
+                var all = [];
+                $.each(tr.rows, function (_, r) { $.each(scalarFields(r), function (k) { if (all.indexOf(k) < 0) { all.push(k); } }); });
+                var layout = tableLayout(name, tr.rows, all);
+                var cols = layout.shown;
+                if (layout.same.length) {
+                    $body.append('<p class="small text-muted instanton-same">Same on every row: ' + $.map(layout.same, function (k) {
+                        return esc(humanize(k)) + ' <b>' + esc(tr.rows[0][k]) + '</b>';
+                    }).join(' &middot; ') + '</p>');
+                }
+                var t = new Table($('<div>').appendTo($body), {search: tr.rows.length > 10, pageSize: tr.rows.length > 25 ? 20 : 0,
+                    columns: $.map(cols, function (c) {
                     return [{label: humanize(c), key: c, render: function (r) {
                         var v = r[c];
                         if (c === 'interfaceName' && data.uplinks && data.uplinks.indexOf(v) >= 0) {
@@ -1843,7 +1881,10 @@
                         }
                         return esc(v);
                     }}];
-                }).concat(editable ? [{label: '', sort: false, csv: false, render: function (r) {
+                }).concat(layout.more.length ? [{label: '', sort: false, csv: false, cls: 'text-right', render: function () {
+                    return '<button type="button" class="btn btn-link btn-xs instanton-row-more" title="Show all fields">' +
+                        layout.more.length + ' more <i class="fa fa-chevron-down"></i></button>';
+                }}] : []).concat(editable ? [{label: '', sort: false, csv: false, cls: 'text-nowrap text-right', render: function (r) {
                     var mgmt = String(((data.sections || {}).ManagementInterfaceGlobalSetting || {}).managementVLAN || '1');
                     if ((data.uplinks || []).indexOf(r.interfaceName) >= 0 ||
                         (/^VLAN/.test(name) && String(r.VLANID) === mgmt)) {
@@ -1853,9 +1894,24 @@
                         '<button class="btn btn-default btn-xs instanton-row-del" title="Delete">' + icon('trash') + '</button>';
                 }}] : [])});
                 t.setRows(tr.rows);
+                var rowOf = function (el) {
+                    var $rows = $(el).closest('tbody').children('tr:not(.instanton-row-detail)');
+                    return t.visibleRows()[$rows.index($(el).closest('tr')) + t.page * (t.pageSize || 0)];
+                };
+                $body.on('click', '.instanton-row-more', function () {
+                    var $tr = $(this).closest('tr');
+                    var $next = $tr.next('.instanton-row-detail');
+                    $(this).find('i').toggleClass('fa-chevron-down fa-chevron-up');
+                    if ($next.length) { $next.remove(); return; }
+                    var row = rowOf(this);
+                    $tr.after('<tr class="instanton-row-detail"><td colspan="' + $tr.children().length + '"><dl class="instanton-fields">' +
+                        $.map(layout.more, function (k) {
+                            return '<div><dt>' + esc(humanize(k)) + '</dt><dd>' + (row[k] === '' || row[k] === undefined ?
+                                '<span class="text-muted">-</span>' : esc(row[k])) + '</dd></div>';
+                        }).join('') + '</dl></td></tr>');
+                });
                 $body.on('click', '.instanton-row-edit, .instanton-row-del', function () {
-                    var idx = $(this).closest('tr').index();
-                    var row = t.visibleRows()[idx];
+                    var row = rowOf(this);
                     var fields = scalarFields(row);
                     var keyFields = {};
                     $.each(['interfaceName', 'interfaceType', 'VLANID', 'unitID', 'IPAddress', 'IPAddr', 'MACAddress', 'ifIndex',
