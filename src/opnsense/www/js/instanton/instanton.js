@@ -164,8 +164,8 @@
             'configuration, the locator LED and restarting the switch.</li>' +
             '<li>Other sections show the values as the switch stores them. Most switches use <i>1</i> for on and <i>2</i> ' +
             'for off; such fields are shown as a choice. Field names are those of the switch interface.</li>' +
-            '<li>' + badge('caution', 'warning') + ' sections can interrupt traffic (VLANs, spanning tree, link ' +
-            'aggregation, filtering, QoS, port settings): you are asked to confirm each change.</li>' +
+            '<li>Changes to sections that can interrupt traffic (VLANs, spanning tree, link aggregation, filtering, QoS, ' +
+            'port settings) ask for a confirmation.</li>' +
             '<li>' + badge('read-only', 'danger') + ' sections control access to the switch (management address and VLAN, ' +
             'accounts and passwords, login authentication, web service, certificates, firmware, access lists). They are ' +
             'never changed by the plugin, so a mistake cannot lock the firewall out of the switch.</li>' +
@@ -1876,7 +1876,7 @@
             var value = (data.sections || {})[name];
             var err = (data.errors || {})[name];
             var risk = RISK[meta.risk] || RISK.normal;
-            var head = (meta.risk !== 'normal' ? ' ' + badge(meta.risk === 'blocked' ? 'read-only' : 'caution', risk[0], risk[1]) : '') +
+            var head = (meta.risk === 'blocked' ? ' ' + badge('read-only', risk[0], risk[1]) : '') +
                 ((data.read_at || {})[name] ? ' <span class="small text-muted" title="' + esc(datetime(data.read_at[name])) + '">read ' +
                     esc(ago(data.read_at[name])) + '</span>' : '');
             var $box = $(section(meta.title, '', head + ' <code class="small text-muted" style="margin-left:auto">' + esc(name) + '</code>'));
