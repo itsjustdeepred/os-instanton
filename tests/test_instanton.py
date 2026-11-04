@@ -484,8 +484,13 @@ class CloudNetworkTest(unittest.TestCase):
         self.assertFalse(net['isEnabled'])
         self.assertEqual([ap['isBoundToNetwork'] for ap in net['accessPoints']], [True, False])
         self.assertFalse(net['isBroadcastOnAllBoundApsOnAllBands'])
-        self.assertEqual(net['perClientBandwidthLimitInMbps'], 25)
-        self.assertNotIn('health', net)
+        body = self.cn.put_body(net)
+        self.assertEqual(set(body), set(self.cn.PUT_KEYS))
+        self.assertEqual(body['qos']['perClientDownloadBandwidthLimitInMbps'], 25)
+        self.assertTrue(body['qos']['isDownloadBandwidthLimitEnabled'])
+        self.assertEqual(body['activeSchedule'], 'none')
+        self.assertEqual(len(body['weekSchedule']['schedulePerWeekdayMap']), 7)
+        self.assertNotIn('health', body)
         self.assertNotIn('preSharedKey', self.cn.public(self.existing))
 
     def test_new_network(self):

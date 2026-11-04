@@ -31,12 +31,63 @@ ID_RE = re.compile(r'^[A-Za-z0-9-]{1,64}$')
 BOOLEANS = ['isEnabled', 'isSsidHidden', 'useVlan', 'isAvailableOn24GHzRadioBand', 'isAvailableOn5GHzRadioBand',
             'isAvailableOn6GHzRadioBand', 'isLegacy80211bRatesEnabled', 'isHighEfficiency11axEnabled',
             'isHighEfficiency11axOfdmaEnabled', 'isDynamicMulticastOptimizationEnabled', 'isInternetAllowed',
-            'isIntraSubnetTrafficAllowed', 'blockPrivateSubnets']
+            'isIntraSubnetTrafficAllowed']
 # counters and state the cloud computes; they are not sent back
 READ_ONLY = {'health', 'healthConditions', 'wirelessClientsCount', 'wireless24GHzClientsCount', 'wireless5GHzClientsCount',
              'wireless6GHzClientsCount', 'downstreamThroughputInBitsPerSecond', 'upstreamThroughputInBitsPerSecond',
              'applicationCategoryUsage', 'applicationsDataPending', 'kind', 'capabilities', 'activeSchedule',
              'networkActivationEffectivePolicy', 'isDeletable', 'bssIndex'}
+
+
+# the fields the portal sends when it changes a network (observed); anything else is refused with HTTP 400
+PUT_KEYS = ['authentication', 'security', 'networkName', 'isEnabled', 'useVlan', 'vlanId', 'wiredNetworkId', 'isSsidHidden',
+            'isWireless', 'type', 'preSharedKey', 'isCaptivePortalEnabled', 'ipAddressingMode', 'isAvailableOn24GHzRadioBand',
+            'isAvailableOn5GHzRadioBand', 'isAvailableOn6GHzRadioBand', 'isLegacy80211bRatesEnabled',
+            'isHighEfficiency11axEnabled', 'isHighEfficiency11axOfdmaEnabled', 'isExtremelyHighThroughput11beEnabled',
+            'isExtremelyHighThroughput11beMloEnabled', 'isDynamicMulticastOptimizationEnabled',
+            'isBroadcastOnAllBoundApsOnAllBands', 'accessPoints', 'isGuestPortalEnabled', 'schedule', 'weekSchedule',
+            'activeSchedule', 'isBandwidthLimitEnabled', 'qos', 'isAccessRestricted', 'isInternetAllowed',
+            'isIntraSubnetTrafficAllowed', 'isSpecificDestinationsAllowed', 'allowedDestinations', 'localAirgroupServices',
+            'sharedAirgroupServices']
+AP_KEYS = ['isBoundToNetwork', 'deviceId', 'deviceName', 'deviceModel', 'radioBandMapping', 'enabledRadioBands']
+WEEKDAYS = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
+
+
+def put_body(net):
+    """The network in the exact shape the portal sends, with the defaults it fills in."""
+    body = {k: net.get(k) for k in PUT_KEYS}
+    if not body.get('schedule'):
+        body['schedule'] = {'activeDays': WEEKDAYS[:5], 'activeTimeRange': {'enabled': False}}
+    if not body.get('weekSchedule'):
+        body['weekSchedule'] = {'schedulePerWeekdayMap': {d: {'enabled': False, 'activeAllDay': True, 'startTime': '09:00',
+                                                              'endTime': '17:00'} for d in WEEKDAYS}}
+    body['activeSchedule'] = body.get('activeSchedule') or 'none'
+    for key in ('localAirgroupServices', 'sharedAirgroupServices', 'allowedDestinations'):
+        body[key] = body.get(key) or []
+    for key in ('isGuestPortalEnabled', 'isAccessRestricted', 'isSpecificDestinationsAllowed', 'isCaptivePortalEnabled'):
+        body[key] = bool(body.get(key))
+    q = dict(net.get('qos') or {})
+    down = q.get('downloadBandwidthLimitInMbps') or 1000
+    up = q.get('uploadBandwidthLimitInMbps') or 1000
+    body['qos'] = {
+        'isBandwidthLimitEnabled': bool(q.get('isBandwidthLimitEnabled')),
+        'isDownloadBandwidthLimitEnabled': bool(q.get('isDownloadBandwidthLimitEnabled', q.get('isBandwidthLimitEnabled'))),
+        'downloadBandwidthLimitInMbps': down,
+        'isUploadBandwidthLimitEnabled': bool(q.get('isUploadBandwidthLimitEnabled', q.get('isBandwidthLimitEnabled'))),
+        'uploadBandwidthLimitInMbps': up,
+        'isTrafficPriorityEnabled': bool(q.get('isTrafficPriorityEnabled')),
+        'trafficPriority': q.get('trafficPriority') or 'medium',
+        'bandwidthLimitMode': q.get('bandwidthLimitMode') or 'perClient',
+        'perClientDownloadBandwidthLimitInMbps': down, 'perClientUploadBandwidthLimitInMbps': up,
+        'perNetworkDownstreamBandwidthLimitInMbps': q.get('perNetworkDownstreamBandwidthLimitInMbps') or down,
+        'perNetworkUpstreamBandwidthLimitInMbps': q.get('perNetworkUpstreamBandwidthLimitInMbps') or up,
+    }
+    if body['qos']['bandwidthLimitMode'] == 'perNetwork':
+        body['qos']['perNetworkDownstreamBandwidthLimitInMbps'] = down
+        body['qos']['perNetworkUpstreamBandwidthLimitInMbps'] = up
+    body['isBandwidthLimitEnabled'] = body['qos']['isBandwidthLimitEnabled']
+    body['accessPoints'] = [{k: ap.get(k) for k in AP_KEYS} for ap in body.get('accessPoints') or []]
+    return body
 
 
 class RequestError(Exception):
@@ -108,6 +159,11 @@ def clean(changes):
                 if not 1 <= value <= 1000:
                     raise RequestError('bandwidth limits go from 1 to 1000 Mb/s')
                 qos[key] = value
+        if 'isBandwidthLimitEnabled' in qos:
+            qos.setdefault('isDownloadBandwidthLimitEnabled', qos['isBandwidthLimitEnabled'])
+            qos.setdefault('isUploadBandwidthLimitEnabled', qos['isBandwidthLimitEnabled'])
+        if 'isTrafficPriorityEnabled' not in qos and q.get('trafficPriority') in ('low', 'medium', 'high'):
+            qos['isTrafficPriorityEnabled'] = q['trafficPriority'] != 'medium'
         if q.get('bandwidthLimitMode') in ('perClient', 'perNetwork'):
             qos['bandwidthLimitMode'] = q['bandwidthLimitMode']
         if q.get('trafficPriority') in ('low', 'medium', 'high'):
@@ -221,8 +277,7 @@ def main():
             print(json.dumps({'status': 'ok', 'network': public(created or body)}))
             return 0
         what = ', '.join(sorted(k for k in changes if k != 'preSharedKey')) + (', password' if 'preSharedKey' in changes else '')
-        body = {k: v for k, v in current.items() if k not in READ_ONLY}
-        body = apply_changes(body, changes)
+        body = put_body(apply_changes(dict(current), changes))
         updated = client.update_network(site, net_id, body)
         record(cfg, 'info', 'Wi-Fi network "%s" changed: %s' % (body.get('networkName'), what or 'no field'))
         print(json.dumps({'status': 'ok', 'network': public(updated or body)}))

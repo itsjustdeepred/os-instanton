@@ -97,3 +97,10 @@ a.port:hover, a.port:focus { color: #fff; text-decoration: none; outline: 2px so
 .instanton-net-tabs { margin: -4px 0 14px; }
 .instanton-net-pane .checkbox { margin: 6px 0 10px; }
 .instanton-net-pane .help-block { margin: 2px 0 0 20px; }
+
+/* load levels, lowest green */
+.progress-bar.instanton-lvl-1 { background-color: #3c9d4b; }
+.progress-bar.instanton-lvl-2 { background-color: #8db33a; }
+.progress-bar.instanton-lvl-3 { background-color: #d8b021; }
+.progress-bar.instanton-lvl-4 { background-color: #e5832b; }
+.progress-bar.instanton-lvl-5 { background-color: #d33f3f; }

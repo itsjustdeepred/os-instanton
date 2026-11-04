@@ -14,6 +14,12 @@
     // ------------------------------------------------------------------
     // formatting helpers
     // ------------------------------------------------------------------
+    // green while the load is low, through yellow and orange, to red near the limit
+    function loadLevel(pct) {
+        var n = Number(pct) || 0;
+        return 'instanton-lvl-' + (n < 40 ? 1 : n < 60 ? 2 : n < 75 ? 3 : n < 90 ? 4 : 5);
+    }
+
     function esc(value) {
         if (value === null || value === undefined) {
             return '';
@@ -611,7 +617,7 @@
                     esc(s.clients_wired) + ' wired', 'ok', '/ui/instanton/index/clients') +
                 card('bolt', 'Power over Ethernet', s.poe_w !== null && s.poe_w !== undefined ? esc(s.poe_w) + ' W' : '-',
                     s.poe_percent !== null && s.poe_percent !== undefined ? esc(s.poe_percent) + '% of ' +
-                        esc(s.poe_nominal_w) + ' W budget' : '', 'ok', '/ui/instanton/index/switch#poe') +
+                        esc(s.poe_nominal_w) + ' W budget' : '', s.poe_percent >= 90 ? 'bad' : 'ok', '/ui/instanton/index/switch#poe') +
                 '</div>';
             var warn = s.warnings ? ' <span class="badge" title="Warnings and critical problems">' + esc(s.warnings) + '</span>' : '';
             var panels = $.map(list, function (sw) {
@@ -786,7 +792,7 @@
                 ['Fans', $.map(sw.fans || [], function (f) { return 'fan ' + f.id + ' ' + (f.status === 'ok' ? badge('ok', 'success') : badge(f.status, 'danger')); }).join(' ')],
                 ['Power supply', sw.psu ? (sw.psu === 'ok' ? badge('ok', 'success') : badge(sw.psu, 'danger')) : ''],
                 ['PoE budget', sw.poe ? esc(sw.poe.used_w) + ' W of ' + esc(sw.poe.nominal_w) + ' W (' + esc(sw.poe.percent) + '%)' +
-                    '<div class="progress instanton-progress"><div class="progress-bar' + (sw.poe.percent > 80 ? ' progress-bar-warning' : '') +
+                    '<div class="progress instanton-progress"><div class="progress-bar ' + loadLevel(sw.poe.percent) +
                     '" style="width:' + Math.min(100, sw.poe.percent) + '%"></div></div>' : ''],
                 ['Clock', skew === null || skew === undefined ? '' : (Math.abs(skew) > 300 ?
                     '<span class="text-warning">' + icon('clock-o') + ' off by ' + esc(duration(Math.abs(skew))) + '</span>' : badge('in sync', 'success'))
@@ -1498,9 +1504,7 @@
                 ip: chk('useVlan', 'Use a VLAN', n.useVlan, 'Puts the devices of this network on a VLAN of the switches and of the firewall.') +
                     txt('vlanId', 'VLAN', n.vlanId, 'For example 20. The VLAN must exist on the firewall and be carried by the switch ports of the access points.') +
                     chk('isInternetAllowed', 'Internet access', n.isInternetAllowed !== false) +
-                    chk('isIntraSubnetTrafficAllowed', 'Devices of this network can talk to each other', n.isIntraSubnetTrafficAllowed) +
-                    chk('blockPrivateSubnets', 'Block the private networks (10.x, 172.16-31.x, 192.168.x)', n.blockPrivateSubnets,
-                        'Keeps these devices away from the other local networks.'),
+                    chk('isIntraSubnetTrafficAllowed', 'Devices of this network can talk to each other', n.isIntraSubnetTrafficAllowed),
                 aps: '<p class="small text-muted">Access points that broadcast this network.</p>' + (aps.length ? $.map(aps, function (a) {
                     return '<div class="checkbox"><label><input type="checkbox" class="instanton-net-ap" value="' + esc(a.deviceId) + '"' +
                         (a.isBoundToNetwork !== false ? ' checked' : '') + '> ' + esc(a.deviceName || a.deviceId) + ' <span class="text-muted small">' +
